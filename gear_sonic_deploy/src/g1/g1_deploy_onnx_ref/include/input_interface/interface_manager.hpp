@@ -9,9 +9,11 @@
  *   - Gamepad          (index 1)
  *   - ZMQEndpointInterface (index 2)
  *   - ROS2InputHandler (index 3, only when compiled with HAS_ROS2)
+ *   - ZMQManager       (last index; pico-teleop planner / streamed-motion mux)
  *
  * Switching is done via **keyboard shortcuts** typed into the terminal:
  *   '!' → Keyboard  |  '@' → Gamepad  |  '#' → ZMQ  |  '$' → ROS2
+ *   '%' → ZMQManager (its own PLANNER/STREAMED_MOTION switch stays network-driven)
  *
  * The manager also handles several **global** controls that work regardless of
  * which interface is active:
@@ -37,6 +39,7 @@
 #include "keyboard_handler.hpp"
 #include "gamepad.hpp"
 #include "zmq_endpoint_interface.hpp"
+#include "zmq_manager.hpp"
 
 #if HAS_ROS2
 #include "ros2_input_handler.hpp"
@@ -54,10 +57,11 @@ class InterfaceManager : public InputInterface {
   public:
     /// Identifies which concrete interface is currently active.
     enum class ManagedType {
-      KEYBOARD = 0,  ///< SimpleKeyboard (stdin)
-      GAMEPAD = 1,   ///< Unitree wireless gamepad
-      ZMQ = 2,       ///< ZMQ packed-message streaming
-      ROS2 = 3       ///< ROS 2 teleop (requires HAS_ROS2)
+      KEYBOARD = 0,     ///< SimpleKeyboard (stdin)
+      GAMEPAD = 1,      ///< Unitree wireless gamepad
+      ZMQ = 2,          ///< ZMQ packed-message streaming
+      ROS2 = 3,         ///< ROS 2 teleop (requires HAS_ROS2)
+      ZMQ_MANAGER = 4   ///< ZMQManager: pico-teleop planner / streamed-motion mux
     };
 
     /**
@@ -73,9 +77,12 @@ class InterfaceManager : public InputInterface {
       int zmq_port,
       const std::string& zmq_topic,
       bool zmq_conflate,
-      bool zmq_verbose
+      bool zmq_verbose,
+      const std::string& zmq_command_topic = "command",
+      const std::string& zmq_planner_topic = "planner"
     ) : InputInterface(), zmq_host_(zmq_host), zmq_port_(zmq_port), zmq_topic_(zmq_topic),
-        zmq_conflate_(zmq_conflate), zmq_verbose_(zmq_verbose) {
+        zmq_conflate_(zmq_conflate), zmq_verbose_(zmq_verbose),
+        zmq_command_topic_(zmq_command_topic), zmq_planner_topic_(zmq_planner_topic) {
       type_ = InputType::UNKNOWN;
       buildInterfaces();
       setActiveIndex(0); // default to keyboard (index 0)
@@ -103,8 +110,12 @@ class InterfaceManager : public InputInterface {
             SetActiveInterface(ManagedType::ZMQ); 
             is_manager_key = true;
             break;
-          case '$': 
-            SetActiveInterface(ManagedType::ROS2); 
+          case '$':
+            SetActiveInterface(ManagedType::ROS2);
+            is_manager_key = true;
+            break;
+          case '%':
+            SetActiveInterface(ManagedType::ZMQ_MANAGER);
             is_manager_key = true;
             break;
           case 'o':
@@ -200,6 +211,14 @@ class InterfaceManager : public InputInterface {
       // Check if ROS2 is active but planner is not available - switch to keyboard
       if (active_ == ManagedType::ROS2 && !has_planner) {
         std::cout << "[InterfaceManager] ROS2 requires planner but planner not loaded. Switching to KEYBOARD" << std::endl;
+        SetActiveInterface(ManagedType::KEYBOARD);
+      }
+
+      // ZMQManager boots in PLANNER mode, which needs a planner. Without one,
+      // fall back to keyboard rather than feeding the control loop dead planner
+      // commands. (Pico teleop is always launched with --planner-file.)
+      if (active_ == ManagedType::ZMQ_MANAGER && !has_planner) {
+        std::cout << "[InterfaceManager] ZMQ_MANAGER requires planner but planner not loaded. Switching to KEYBOARD" << std::endl;
         SetActiveInterface(ManagedType::KEYBOARD);
       }
 
@@ -301,6 +320,15 @@ class InterfaceManager : public InputInterface {
       ros2_ = std::make_unique<ROS2InputHandler>(true, "g1_deploy_ros2_handler");
       order_.push_back(ManagedType::ROS2);
 #endif
+
+      // ZMQManager owns its own pose/command/planner subscribers; they run for
+      // the whole session even while this delegate is inactive. Activation does
+      // a safety reset so queued commands don't leak across switches.
+      zmq_manager_ = std::make_unique<ZMQManager>(
+        zmq_host_, zmq_port_, zmq_topic_, zmq_command_topic_, zmq_planner_topic_,
+        zmq_conflate_, zmq_verbose_
+      );
+      order_.push_back(ManagedType::ZMQ_MANAGER);
     }
 
     /// Set the active interface by numeric index (wraps around).
@@ -317,6 +345,7 @@ class InterfaceManager : public InputInterface {
 #if HAS_ROS2
       if (ros2_) ros2_->TriggerSafetyReset();
 #endif
+      if (zmq_manager_) zmq_manager_->TriggerSafetyReset();
 
       active_index_ = idx;
       active_ = order_[static_cast<size_t>(active_index_)];
@@ -351,6 +380,11 @@ class InterfaceManager : public InputInterface {
           std::cout << "[InterfaceManager] ROS2 not available. Falling back to KEYBOARD (safety reset triggered)" << std::endl;
           break;
 #endif
+        case ManagedType::ZMQ_MANAGER:
+          current_ = zmq_manager_.get();
+          type_ = InputType::NETWORK;
+          std::cout << "[InterfaceManager] Switched to: ZMQ_MANAGER (safety reset triggered)" << std::endl;
+          break;
       }
     }
 
@@ -367,6 +401,7 @@ class InterfaceManager : public InputInterface {
 #if HAS_ROS2
     std::unique_ptr<ROS2InputHandler> ros2_;                ///< ROS 2 teleop handler.
 #endif
+    std::unique_ptr<ZMQManager> zmq_manager_;               ///< Pico-teleop planner/streamed-motion mux.
 
     InputInterface* current_ = nullptr;  ///< Non-owning pointer to the active delegate.
 
@@ -383,6 +418,8 @@ class InterfaceManager : public InputInterface {
     std::string zmq_topic_;
     bool zmq_conflate_ = false;
     bool zmq_verbose_ = false;
+    std::string zmq_command_topic_ = "command";  ///< ZMQManager command topic (start/stop/mode).
+    std::string zmq_planner_topic_ = "planner";   ///< ZMQManager planner (movement) topic.
     
     /// Global emergency-stop flag, set by 'O'/'o' key.
     /// Applies to ALL interfaces (especially useful when gamepad is active
