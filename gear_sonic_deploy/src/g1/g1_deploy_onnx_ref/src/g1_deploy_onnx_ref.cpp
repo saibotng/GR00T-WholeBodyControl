@@ -2464,13 +2464,14 @@ class G1Deploy {
       }
       else if (input_type == "manager") {
         input_interface_ = std::make_unique<InterfaceManager>(
-          zmq_host, zmq_port, zmq_topic, zmq_conflate, zmq_verbose
+          zmq_host, zmq_port, zmq_topic, zmq_conflate, zmq_verbose,
+          "command", "planner"
         );
-        std::cout << "Initialized interface manager (Shift+1/2/3/4 [! @ # $] to switch: keyboard, gamepad, zmq"
+        std::cout << "Initialized interface manager (Shift+1/2/3/4/5 [! @ # $ %] to switch: keyboard, gamepad, zmq"
 #if HAS_ROS2
                   " , ros2"
 #endif
-                  ")" << std::endl;
+                  ", zmq_manager)" << std::endl;
         std::cout << "  Host: " << zmq_host << ":" << zmq_port << std::endl;
         std::cout << "  Topic: " << zmq_topic << std::endl;
         std::cout << "  Conflate: " << (zmq_conflate ? "enabled" : "disabled") << std::endl;
