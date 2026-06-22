@@ -1668,13 +1668,31 @@ private:
                 std::cout << "[ZMQEndpointInterface] Protocol version " << active_protocol_version_ << " established" << std::endl;
             }
         } else if (active_protocol_version_ != protocol_version) {
-            // Protocol version changed - this is an error
-            std::cerr << "[ZMQEndpointInterface] ERROR: Protocol version changed from " 
-                      << active_protocol_version_ << " to " << protocol_version << std::endl;
-            result.protocol_version = protocol_version;  // Signal the change to caller
-            return result;
+            // Protocol version changed mid-session (e.g. the operator switched
+            // between a joint/g1 clip (v1) and an SMPL clip (v2) over the same
+            // ZMQ socket while a continuous idle stream keeps the session alive).
+            // The original behavior disabled ZMQ entirely (DisableZmqAndReset),
+            // forcing a manual re-toggle between every family switch. Instead we
+            // gracefully re-establish: reset the merger window + timing and adopt
+            // the new version, treating this message as the first of a fresh
+            // streaming session. This is identical to the post-ZMQ-toggle path
+            // (ResetStreamedMotion -> first merge), which is well-tested; the
+            // merger returns did_catchup_reset=true so the caller resets playback
+            // to frame 0 and the per-motion encode_mode is re-derived below.
+            // NOTE (real robot): switching the encoder mid-stream can produce a
+            // transient at the boundary; clips here are gated behind the idle
+            // hand-off so the robot is near-neutral when the family changes.
+            std::cout << "[ZMQEndpointInterface] Protocol version changed from "
+                      << active_protocol_version_ << " to " << protocol_version
+                      << " — re-establishing streamed session (ZMQ stays enabled)." << std::endl;
+            motion_merger_.Reset();
+            stream_window_start_ = 0;
+            data_timestamp_.reset();
+            last_receive_time_.reset();
+            active_protocol_version_ = protocol_version;
+            // fall through to STEP 4 and merge this message as a fresh first frame
         }
-        
+
         // ===== STEP 4: Package decoded data and call StreamedMotionMerger =====
         
         // Prepare IncomingData structure for the merger
