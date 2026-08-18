@@ -15,10 +15,10 @@ from typing import Literal
 
 from gear_sonic.data.robot_model import RobotModel
 
-EGO_VIEW_HEIGHT: int = 480
-EGO_VIEW_WIDTH: int = 640
-WRIST_VIEW_HEIGHT: int = 480
-WRIST_VIEW_WIDTH: int = 640
+EGO_VIEW_HEIGHT: int = 240
+EGO_VIEW_WIDTH: int = 424
+WRIST_VIEW_HEIGHT: int = 240
+WRIST_VIEW_WIDTH: int = 424
 FPS: int = 50
 
 
