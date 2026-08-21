@@ -31,7 +31,7 @@ class RealSenseConfig:
     """Configuration for the RealSense camera."""
 
     depth_image_dim: tuple[int, int] = (640, 480)
-    color_image_dim: tuple[int, int] = (640, 480)
+    color_image_dim: tuple[int, int] = (424, 240)
     fps: int = 30
     mount_position: str = CameraMountPosition.EGO_VIEW.value
 
@@ -45,6 +45,8 @@ class RealSenseSensor(Sensor, SensorServer):
         port: int = 5555,
         config: RealSenseConfig = RealSenseConfig(),
         id: int = 0,
+        device_id: str | None = None,
+        rotate_180: bool = False,
         mount_position: str = CameraMountPosition.EGO_VIEW.value,
     ):
         devices = rs.context().query_devices()
@@ -59,7 +61,16 @@ class RealSenseSensor(Sensor, SensorServer):
         self.pipeline = rs.pipeline()
         self.config = rs.config()
         devices = sorted(devices, key=lambda x: x.get_info(rs.camera_info.serial_number))
-        self.config.enable_device(devices[id].get_info(rs.camera_info.serial_number))
+        if device_id is not None:
+            serials = [d.get_info(rs.camera_info.serial_number) for d in devices]
+            if device_id not in serials:
+                raise RuntimeError(
+                    f"RealSense with serial {device_id} not found (available: {serials})"
+                )
+            serial = device_id
+        else:
+            serial = devices[id].get_info(rs.camera_info.serial_number)
+        self.config.enable_device(serial)
 
         try:
             self.config.enable_stream(
@@ -69,13 +80,6 @@ class RealSenseSensor(Sensor, SensorServer):
                 rs.format.rgb8,
                 config.fps,
             )
-            self.config.enable_stream(
-                rs.stream.depth,
-                config.depth_image_dim[0],
-                config.depth_image_dim[1],
-                rs.format.z16,
-                config.fps,
-            )
             self.pipeline.start(self.config)
         except Exception as e:
             raise RuntimeError(f"Failed to start RealSense pipeline: {e}")
@@ -83,11 +87,12 @@ class RealSenseSensor(Sensor, SensorServer):
         self._realsense_config = config
         self._run_as_server = run_as_server
         self.mount_position = mount_position
+        self._rotate_180 = rotate_180
         if self._run_as_server:
             self.start_server(port)
         print(
             f"Done initializing RealSense sensor: "
-            f"{devices[id].get_info(rs.camera_info.serial_number)}"
+            f"{serial}"
         )
 
     def read(self) -> dict[str, Any] | None:
@@ -98,32 +103,27 @@ class RealSenseSensor(Sensor, SensorServer):
             return None
 
         color_frame = frames.get_color_frame()
-        depth_frame = frames.get_depth_frame()
 
-        if not color_frame or not depth_frame:
-            print("WARNING! No color or depth frame")
+        if not color_frame:
+            print("WARNING! No color frame")
             return None
 
         try:
             color_image = np.asanyarray(color_frame.get_data())
-            depth_image = np.asanyarray(depth_frame.get_data())
         except Exception as e:
             print(f"ERROR! Failed to convert frames to numpy arrays: {e}")
             return None
 
-        if color_image.size == 0 or depth_image.size == 0:
-            print("WARNING! Empty color or depth image")
+        if color_image.size == 0:
+            print("WARNING! Empty color image")
             return None
 
+        if self._rotate_180:
+            color_image = np.ascontiguousarray(color_image[::-1, ::-1])
+
         current_time = time.time()
-        timestamps = {
-            self.mount_position: current_time,
-            f"{self.mount_position}_depth": current_time,
-        }
-        images = {
-            self.mount_position: color_image,
-            f"{self.mount_position}_depth": depth_image,
-        }
+        timestamps = {self.mount_position: current_time}
+        images = {self.mount_position: color_image}
         return {"timestamps": timestamps, "images": images}
 
     def serialize(self, data: dict[str, Any]) -> dict[str, Any]:
