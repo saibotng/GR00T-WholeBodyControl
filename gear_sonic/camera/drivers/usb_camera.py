@@ -4,6 +4,7 @@ No hardware SDK needed — works with any UVC-compatible camera visible as
 ``/dev/video*``.  Only requires ``opencv-python``.
 """
 
+import os
 import time
 from typing import Any
 
@@ -48,8 +49,12 @@ class USBCameraSensor(Sensor):
         self._rotate_180 = rotate_180
 
         idx = device_index if device_index is not None else config.device_index
+        if isinstance(idx, str):
+            # Resolve by-id symlinks to the real /dev/videoN node; paths with
+            # spaces confuse OpenCV's default backend selection.
+            idx = os.path.realpath(idx)
 
-        self.cap = cv2.VideoCapture(idx)
+        self.cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
         if not self.cap.isOpened():
             raise RuntimeError(f"Failed to open USB camera at index {idx}")
 
