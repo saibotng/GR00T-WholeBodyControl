@@ -79,6 +79,9 @@ class ComposedCameraConfig:
     fps: int = 30
     """Publish rate.  OAK cameras run at 30 FPS; lower values add latency."""
 
+    rotate_180: str = ""
+    """Comma-separated mount positions to rotate 180 deg (e.g. "right_wrist")."""
+
     run_as_server: bool = True
     """Run as ZMQ PUB server (set False for in-process usage)."""
 
@@ -376,7 +379,12 @@ class ComposedCameraSensor(Sensor, SensorServer):
             from gear_sonic.camera.drivers.realsense import RealSenseSensor
 
             print(f"Initializing RealSense sensor for camera type: {camera_type}")
-            return RealSenseSensor(mount_position=mount_position)
+            rotate = mount_position in {
+                p.strip() for p in self.config.rotate_180.split(",") if p.strip()
+            }
+            return RealSenseSensor(
+                mount_position=mount_position, device_id=device_id, rotate_180=rotate
+            )
 
         elif camera_type.endswith(".mp4"):
             from gear_sonic.camera.drivers.dummy import ReplayDummySensor
