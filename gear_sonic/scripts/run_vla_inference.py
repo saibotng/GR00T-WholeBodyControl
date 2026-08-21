@@ -190,7 +190,7 @@ def pack_latent_action_message(
     return pack_pose_message(pose_data, topic="pose", version=4)
 
 
-def get_action_field(action_dict: dict, key: str):
+def get_action_field(action_dict: dict, key: str, required: bool = True):
     """Get action field from dict, checking both with and without 'action.' prefix."""
     value = action_dict.get(key)
     if value is not None:
@@ -198,6 +198,8 @@ def get_action_field(action_dict: dict, key: str):
     value = action_dict.get(f"action.{key}")
     if value is not None:
         return value
+    if not required:
+        return None
     raise AssertionError(
         f"Required action field '{key}' (or 'action.{key}') not found in processed_action. "
         f"Available keys: {list(action_dict.keys())}"
@@ -692,22 +694,25 @@ def main(config: InferenceConfig):
                         get_action_field(processed_action, "motion_token"),
                         dtype=np.float32,
                     )
-                    left_hand_joints = np.asarray(
-                        get_action_field(processed_action, "left_hand_joints"),
-                        dtype=np.float32,
+                    # Hand joints are absent for policies trained without hands.
+                    left_hand_joints = get_action_field(
+                        processed_action, "left_hand_joints", required=False
                     )
-                    right_hand_joints = np.asarray(
-                        get_action_field(processed_action, "right_hand_joints"),
-                        dtype=np.float32,
+                    if left_hand_joints is not None:
+                        left_hand_joints = np.asarray(left_hand_joints, dtype=np.float32)
+                    right_hand_joints = get_action_field(
+                        processed_action, "right_hand_joints", required=False
                     )
+                    if right_hand_joints is not None:
+                        right_hand_joints = np.asarray(right_hand_joints, dtype=np.float32)
 
                     # Action arrays arrive as (B, T, D) from the model.
                     # Squeeze batch dim to get (T, D), then index by time step.
                     if motion_token.ndim == 3:
                         motion_token = motion_token[0]
-                    if left_hand_joints.ndim == 3:
+                    if left_hand_joints is not None and left_hand_joints.ndim == 3:
                         left_hand_joints = left_hand_joints[0]
-                    if right_hand_joints.ndim == 3:
+                    if right_hand_joints is not None and right_hand_joints.ndim == 3:
                         right_hand_joints = right_hand_joints[0]
 
                     horizon = motion_token.shape[0] if motion_token.ndim == 2 else 1
@@ -715,9 +720,9 @@ def main(config: InferenceConfig):
 
                     if motion_token.ndim == 2:
                         motion_token = motion_token[current_idx]
-                    if left_hand_joints.ndim == 2:
+                    if left_hand_joints is not None and left_hand_joints.ndim == 2:
                         left_hand_joints = left_hand_joints[current_idx]
-                    if right_hand_joints.ndim == 2:
+                    if right_hand_joints is not None and right_hand_joints.ndim == 2:
                         right_hand_joints = right_hand_joints[current_idx]
 
                     frame_index = np.array([zmq_frame_counter], dtype=np.int64)
