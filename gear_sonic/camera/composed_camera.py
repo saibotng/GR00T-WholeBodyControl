@@ -396,10 +396,20 @@ class ComposedCameraSensor(Sensor, SensorServer):
             from gear_sonic.camera.drivers.usb_camera import USBCameraConfig, USBCameraSensor
 
             usb_config = USBCameraConfig()
-            device_idx = int(device_id) if device_id else 0
-            print(f"Initializing USB camera for type: {camera_type}, device: {device_idx}")
+            device: int | str
+            try:
+                device = int(device_id) if device_id else 0
+            except ValueError:
+                device = device_id  # stable path, e.g. /dev/v4l/by-id/...
+            rotate = mount_position in {
+                p.strip() for p in self.config.rotate_180.split(",") if p.strip()
+            }
+            print(f"Initializing USB camera for type: {camera_type}, device: {device}")
             return USBCameraSensor(
-                config=usb_config, mount_position=mount_position, device_index=device_idx
+                config=usb_config,
+                mount_position=mount_position,
+                device_index=device,
+                rotate_180=rotate,
             )
 
         else:
