@@ -272,6 +272,9 @@ class RTCWebSocketClient:
                 if isinstance(action, np.ndarray):
                     self.execute_action(action)
                     print(f"[client] Received action, version={version}, shape={action.shape}")
+                    if os.environ.get("PSI_DEBUG_ACTIONS"):
+                        flat = action.reshape(-1)
+                        print(f"[client][debug] recv token[:6]={np.round(flat[:6],4)} hands={np.round(flat[64:78],4)}")
 
         except Exception as e:
             print(f"[client] Message processing error: {e}")
