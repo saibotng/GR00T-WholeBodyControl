@@ -74,7 +74,26 @@ def convert_numpy_in_dict(data, func):
 
 
 # ---------------- RSCamera ----------------
+class ComposedCamera:
+    """Ego view from gear_sonic's composed camera server (ZMQ PUB, msgpack) —
+    the same stream the SONIC data exporter records, so deployed frames match
+    the training distribution (RGB, same resolution/crop/rotation)."""
+    returns_rgb = True
+
+    def __init__(self, host="192.168.123.164", port=5555):
+        from gear_sonic.camera.composed_camera import ComposedCameraClientSensor
+        self._sensor = ComposedCameraClientSensor(server_ip=host, port=port)
+
+    def get_frame(self):
+        while True:
+            msg = self._sensor.read(blocking=True)
+            if msg is not None and "ego_view" in msg.get("images", {}):
+                return msg["images"]["ego_view"]
+
+
 class RSCamera:
+    returns_rgb = False
+
     def __init__(self, address="tcp://192.168.123.164:5558"):
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.REQ)
@@ -296,7 +315,8 @@ class RTCWebSocketClient:
 
                 # Get camera frame
                 frame = self._camera.get_frame()
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                if not getattr(self._camera, "returns_rgb", False):
+                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 frame = frame.astype(np.uint8)
 
                 # Build observation payload
@@ -363,7 +383,7 @@ class RTCWebSocketClient:
 
 # ---------------- Main ----------------
 def main(server_url, zmq_host, zmq_pub_port, zmq_sub_port, zmq_topic, zmq_sub_topic,
-         camera_address, history_length=1):
+         camera_address, history_length=1, camera_protocol="composed"):
     print("[MAIN] Initializing components...")
 
     # 1. Initialize token publisher (ZMQ PUB, Protocol v4)
@@ -375,8 +395,13 @@ def main(server_url, zmq_host, zmq_pub_port, zmq_sub_port, zmq_topic, zmq_sub_to
     print(f"[MAIN] State subscriber connected to {zmq_host}:{zmq_sub_port}, topic='{zmq_sub_topic}'")
 
     # 3. Initialize camera
-    camera = RSCamera(address=camera_address)
-    print(f"[MAIN] Camera connected to {camera_address}")
+    if camera_protocol == "composed":
+        hostport = camera_address.replace("tcp://", "")
+        cam_host, cam_port = hostport.rsplit(":", 1)
+        camera = ComposedCamera(host=cam_host, port=int(cam_port))
+    else:
+        camera = RSCamera(address=camera_address)
+    print(f"[MAIN] Camera ({camera_protocol}) connected to {camera_address}")
 
     # 4. Wait briefly for ZMQ PUB socket to establish connections
     time.sleep(1.0)
@@ -462,8 +487,12 @@ if __name__ == "__main__":
                         help="ZMQ topic for pose messages")
     parser.add_argument("--zmq-sub-topic", type=str, default="g1_debug",
                         help="ZMQ topic for robot state subscription")
-    parser.add_argument("--camera-address", type=str, default="tcp://192.168.123.164:5558",
+    parser.add_argument("--camera-address", type=str, default="tcp://192.168.123.164:5555",
                         help="Camera ZMQ address")
+    parser.add_argument("--camera-protocol", type=str, choices=["composed", "reqrep"],
+                        default="composed",
+                        help="composed: gear_sonic composed-camera PUB stream (matches the "
+                             "data-collection pipeline); reqrep: Psi0 realsense_server.py")
     parser.add_argument("--instruction", type=str, default=None,
                         help="Task instruction for VLA policy")
     parser.add_argument("--state-history-length", type=int, default=1,
@@ -483,5 +512,6 @@ if __name__ == "__main__":
         zmq_topic=args.zmq_topic,
         zmq_sub_topic=args.zmq_sub_topic,
         camera_address=args.camera_address,
+        camera_protocol=args.camera_protocol,
         history_length=args.state_history_length,
     )
