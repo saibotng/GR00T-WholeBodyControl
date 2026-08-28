@@ -40,10 +40,10 @@ if ! command -v uv &>/dev/null; then
 fi
 echo "[OK] uv $(uv --version)"
 
-# ── 2. Install a uv-managed Python 3.10 (includes dev headers / Python.h) ────
-echo "[INFO] Installing uv-managed Python 3.10 (includes development headers) …"
-uv python install 3.10
-MANAGED_PY="$(uv python find --no-project 3.10)"
+# ── 2. Install a uv-managed Python 3.12 (includes dev headers / Python.h) ────
+echo "[INFO] Installing uv-managed Python 3.12 (includes development headers) …"
+uv python install 3.12
+MANAGED_PY="$(uv python find --no-project 3.12)"
 echo "[OK] Using Python: $MANAGED_PY"
 
 # ── 3. Clean previous venv (if any) ──────────────────────────────────────────
@@ -52,7 +52,7 @@ echo "[INFO] Removing old .venv_inference (if present) …"
 rm -rf .venv_inference
 
 # ── 4. Create venv & install inference extra ─────────────────────────────────
-echo "[INFO] Creating .venv_inference with uv-managed Python 3.10 …"
+echo "[INFO] Creating .venv_inference with uv-managed Python 3.12 …"
 uv venv .venv_inference --python "$MANAGED_PY" --prompt gear_sonic_inference
 # shellcheck disable=SC1091
 source .venv_inference/bin/activate
