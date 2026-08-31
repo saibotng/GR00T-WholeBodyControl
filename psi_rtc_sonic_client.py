@@ -75,20 +75,31 @@ def convert_numpy_in_dict(data, func):
 
 # ---------------- RSCamera ----------------
 class ComposedCamera:
-    """Ego view from gear_sonic's composed camera server (ZMQ PUB, msgpack) —
+    """Views from gear_sonic's composed camera server (ZMQ PUB, msgpack) —
     the same stream the SONIC data exporter records, so deployed frames match
     the training distribution (RGB, same resolution/crop/rotation)."""
     returns_rgb = True
+    # stream name -> observation payload key (matches raw_sonic_to_psi_lerobot.py)
+    VIEW_KEYS = {
+        "ego_view": "observation.images.egocentric",
+        "left_wrist": "observation.images.left_wrist",
+        "right_wrist": "observation.images.right_wrist",
+    }
 
     def __init__(self, host="192.168.123.164", port=5555):
         from gear_sonic.camera.composed_camera import ComposedCameraClientSensor
         self._sensor = ComposedCameraClientSensor(server_ip=host, port=port)
 
-    def get_frame(self):
+    def get_frames(self):
+        """dict of payload_key -> RGB frame for every view present in the stream."""
         while True:
             msg = self._sensor.read(blocking=True)
-            if msg is not None and "ego_view" in msg.get("images", {}):
-                return msg["images"]["ego_view"]
+            imgs = (msg or {}).get("images", {})
+            if "ego_view" in imgs:
+                return {self.VIEW_KEYS[k]: v for k, v in imgs.items() if k in self.VIEW_KEYS}
+
+    def get_frame(self):
+        return self.get_frames()["observation.images.egocentric"]
 
 
 class RSCamera:
@@ -316,14 +327,15 @@ class RTCWebSocketClient:
 
                 states_np = np.stack(states_list, axis=0)  # (N, Ds)
 
-                # Get camera frame
-                frame = self._camera.get_frame()
-                if not getattr(self._camera, "returns_rgb", False):
-                    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = frame.astype(np.uint8)
-
-                # Build observation payload
-                img_obs = {"observation.images.egocentric": frame}
+                # Get camera frame(s): every view the stream carries (the server
+                # picks the ones its run config lists in repack.image_keys)
+                if hasattr(self._camera, "get_frames"):
+                    img_obs = {k: v.astype(np.uint8) for k, v in self._camera.get_frames().items()}
+                else:
+                    frame = self._camera.get_frame()
+                    if not getattr(self._camera, "returns_rgb", False):
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    img_obs = {"observation.images.egocentric": frame.astype(np.uint8)}
                 state_obs = {"states": states_np}
 
                 payload = {
