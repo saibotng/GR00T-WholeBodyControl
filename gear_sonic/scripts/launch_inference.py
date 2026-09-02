@@ -276,8 +276,14 @@ def main(config: InferenceLaunchConfig):
     exporter_prompt = config.task_prompt if config.task_prompt else config.prompt
 
     policy_port = config.policy_port
-    if config.policy_client == "psi0" and policy_port == 5550:
-        policy_port = 8014  # Psi0 RTC server default
+    deploy_input_type = config.deploy_input_type
+    if config.policy_client == "psi0":
+        if policy_port == 5550:
+            policy_port = 8014  # Psi0 RTC server default
+        if deploy_input_type == "zmq_manager":
+            # psi client talks to the plain ZMQ endpoint interface (start/stop
+            # commands, pose topic); terminal ]/Enter also only work there
+            deploy_input_type = "zmq"
 
     print("=" * 60)
     print("  SONIC VLA Inference Launcher")
@@ -328,7 +334,7 @@ def main(config: InferenceLaunchConfig):
     deploy_cmd = (
         f"cd {repo_root / 'gear_sonic_deploy'} && "
         f"./deploy.sh "
-        f"--input-type {config.deploy_input_type} "
+        f"--input-type {deploy_input_type} "
         f"--zmq-host {config.deploy_zmq_host} "
     )
     if config.deploy_checkpoint:
