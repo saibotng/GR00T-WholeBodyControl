@@ -11,6 +11,8 @@ the LATENT_INITIAL_MOTION_TOKEN alias at a token for the new checkpoint — see
 the step-by-step instructions above the token definitions below.
 """
 
+import os
+
 import numpy as np
 
 # 64-dim motion tokens for a stable standing pose — ONE PER SONIC CHECKPOINT.
@@ -62,5 +64,16 @@ LATENT_INITIAL_MOTION_TOKEN_RELEASE = np.array(
 )
 
 # The token actually used at deploy time. MUST match the SONIC checkpoint
-# passed to the controller (--cp / --deploy-checkpoint).
-LATENT_INITIAL_MOTION_TOKEN = LATENT_INITIAL_MOTION_TOKEN_LOW_LATENCY
+# passed to the controller (--cp / --deploy-checkpoint). Selected via the
+# SONIC_INITIAL_TOKEN env var ("low_latency" | "release"), default low_latency:
+#   SONIC_INITIAL_TOKEN=release python gear_sonic/scripts/launch_inference.py ...
+_TOKENS_BY_CHECKPOINT = {
+    "low_latency": LATENT_INITIAL_MOTION_TOKEN_LOW_LATENCY,
+    "release": LATENT_INITIAL_MOTION_TOKEN_RELEASE,
+}
+_selected = os.environ.get("SONIC_INITIAL_TOKEN", "low_latency")
+if _selected not in _TOKENS_BY_CHECKPOINT:
+    raise ValueError(
+        f"SONIC_INITIAL_TOKEN={_selected!r} — must be one of {sorted(_TOKENS_BY_CHECKPOINT)}"
+    )
+LATENT_INITIAL_MOTION_TOKEN = _TOKENS_BY_CHECKPOINT[_selected]
