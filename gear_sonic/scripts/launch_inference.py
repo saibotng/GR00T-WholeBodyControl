@@ -349,8 +349,26 @@ def main(config: InferenceLaunchConfig):
     if not _check_pane_alive(0):
         print("WARNING: C++ deploy pane may have failed to start.")
 
-    # --- Pane 2 (bottom-left): Keyboard Publisher ---
-    keyboard_script = textwrap.dedent("""\
+    # --- Pane 2 (bottom-left): Keyboard Publisher / controller console ---
+    if config.policy_client == "psi0":
+        # The psi0 client has no keyboard channel; the C++ controller reads raw,
+        # unechoed keys from its own pane. This console gives an echoing prompt
+        # and forwards each key to the deploy pane via tmux send-keys.
+        keyboard_script = textwrap.dedent(f"""\
+            import subprocess
+            TARGET = "{SESSION_NAME}:0.0"
+            print("Psi0 controller console — keys are forwarded to the deploy pane:")
+            print("  ]        stand up (ROBOT MOVES)")
+            print("  <enter>  start / stop the policy (toggle)")
+            print("  any other single key is forwarded as-is")
+            while True:
+                line = input("> ")
+                key = "Enter" if line == "" else line
+                subprocess.run(["tmux", "send-keys", "-t", TARGET, key])
+                print(f"sent: {{key!r}}")
+        """)
+    else:
+        keyboard_script = textwrap.dedent("""\
         import zmq, time
         ctx = zmq.Context()
         pub = ctx.socket(zmq.PUB)
