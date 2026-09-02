@@ -114,11 +114,17 @@ class InferenceLaunchConfig:
     """Output type for deploy.sh. Leave empty for default."""
 
     # VLA inference options
+    policy_client: str = "gr00t"
+    """Policy client for the inference pane: "gr00t" (run_vla_inference.py against an
+    Isaac-GR00T PolicyServer) or "psi0" (psi_rtc_sonic_client.py against a Psi0 RTC
+    server started separately, e.g. via serve_psi0-rtc-sonic.sh)."""
+
     policy_host: str = "localhost"
-    """Isaac-GR00T PolicyServer host."""
+    """Policy server host (Isaac-GR00T PolicyServer or Psi0 RTC server)."""
 
     policy_port: int = 5550
-    """Isaac-GR00T PolicyServer port."""
+    """Policy server port. With --policy-client psi0 the untouched default maps to
+    the Psi0 RTC port 8014."""
 
     embodiment_tag: str = "unitree_g1_sonic"
     """Embodiment tag for policy inference."""
@@ -188,6 +194,16 @@ def _check_prerequisites(config: InferenceLaunchConfig):
         errors.append(
             ".venv_sim not found. Set up the simulation venv first."
         )
+
+    if config.policy_client not in ("gr00t", "psi0"):
+        errors.append(
+            f"--policy-client must be 'gr00t' or 'psi0' (got {config.policy_client!r})"
+        )
+    if config.policy_client == "psi0":
+        if not (repo_root / ".venv_teleop" / "bin" / "python").exists():
+            errors.append(".venv_teleop not found (needed for the psi0 client).")
+        if not (repo_root / "psi_rtc_sonic_client.py").exists():
+            errors.append("psi_rtc_sonic_client.py not found at the repo root.")
 
     if errors:
         print("ERROR: Prerequisites not met:\n")
@@ -259,11 +275,16 @@ def main(config: InferenceLaunchConfig):
 
     exporter_prompt = config.task_prompt if config.task_prompt else config.prompt
 
+    policy_port = config.policy_port
+    if config.policy_client == "psi0" and policy_port == 5550:
+        policy_port = 8014  # Psi0 RTC server default
+
     print("=" * 60)
     print("  SONIC VLA Inference Launcher")
     print("=" * 60)
     print(f"  Mode:            {'Simulation' if config.sim else 'Real Robot'}")
-    print(f"  PolicyServer:    {config.policy_host}:{config.policy_port}")
+    print(f"  Policy client:   {config.policy_client}")
+    print(f"  PolicyServer:    {config.policy_host}:{policy_port}")
     print(f"  Embodiment:      {config.embodiment_tag}")
     print(f"  Prompt:          {config.prompt}")
     print(f"  Action rate:     {config.action_publish_rate} Hz")
@@ -373,21 +394,35 @@ def main(config: InferenceLaunchConfig):
         _send_to_pane(3, exporter_cmd, wait=2.0)
 
     # --- Pane 1 (top-right): VLA Inference ---
-    inference_cmd = (
-        f"cd {repo_root} && "
-        f"source .venv_inference/bin/activate && "
-        f"python gear_sonic/scripts/run_vla_inference.py "
-        f"--host {config.policy_host} "
-        f"--port {config.policy_port} "
-        f"--embodiment-tag {config.embodiment_tag} "
-        f"--prompt '{config.prompt}' "
-        f"--action-publish-rate {config.action_publish_rate} "
-        f"--action-horizon {config.action_horizon} "
-        f"--camera-host {config.camera_host} "
-        f"--camera-port {config.camera_port}"
-    )
+    if config.policy_client == "psi0":
+        # Psi0 RTC client: same controller/camera plumbing, WebSocket to the Psi0
+        # server instead of the GR00T PolicyServer. Sends start on launch, stop on
+        # Ctrl+C; stand/init keys go to the deploy pane as usual.
+        inference_cmd = (
+            f"cd {repo_root} && "
+            f"./.venv_teleop/bin/python psi_rtc_sonic_client.py "
+            f"--host {config.policy_host} "
+            f"--port {policy_port} "
+            f"--camera-address tcp://{config.camera_host}:{config.camera_port} "
+            f"--camera-protocol composed "
+            f"--instruction '{config.prompt}'"
+        )
+    else:
+        inference_cmd = (
+            f"cd {repo_root} && "
+            f"source .venv_inference/bin/activate && "
+            f"python gear_sonic/scripts/run_vla_inference.py "
+            f"--host {config.policy_host} "
+            f"--port {policy_port} "
+            f"--embodiment-tag {config.embodiment_tag} "
+            f"--prompt '{config.prompt}' "
+            f"--action-publish-rate {config.action_publish_rate} "
+            f"--action-horizon {config.action_horizon} "
+            f"--camera-host {config.camera_host} "
+            f"--camera-port {config.camera_port}"
+        )
 
-    print("Starting VLA inference (pane 1)...")
+    print(f"Starting VLA inference pane ({config.policy_client})...")
     _send_to_pane(2, inference_cmd, wait=1.0)
 
     # Select the VLA inference pane
