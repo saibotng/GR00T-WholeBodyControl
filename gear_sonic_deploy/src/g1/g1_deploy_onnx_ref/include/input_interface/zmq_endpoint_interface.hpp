@@ -66,6 +66,8 @@
 #include <algorithm>
 #include <cstdlib>
 #include <limits>
+#include <chrono>
+#include <optional>
 
 #include "input_interface.hpp"
 #include "zmq_packed_message_subscriber.hpp"
@@ -116,6 +118,21 @@ public:
     /// Protocol version established by the first received ZMQ message.
     /// −1 = not yet established.  Changing mid-session is an error.
     int active_protocol_version_ = -1;
+
+    // ------------------------------------------------------------------
+    // Stale-token watchdog (protocol v4 / token streaming)
+    // ------------------------------------------------------------------
+    // The main loop keeps executing the LAST latched token when the publisher
+    // stops (client killed, policy server stopped sending). Because the latched
+    // token is re-read every tick, the main loop's own freshness check never
+    // fires. This watchdog uses the real receive timestamp instead.
+    /// Warn once the newest token is older than this.
+    static constexpr std::chrono::milliseconds STALE_TOKEN_WARN_MS{200};
+    /// Fallback: leave ZMQ streaming mode and return to the reference motion
+    /// once the newest token is older than this many ms. 0 = warn only (hold
+    /// the last token, legacy behaviour). Set via env SONIC_TOKEN_STALE_FALLBACK_MS.
+    long stale_token_fallback_ms_ = 0;
+    uint64_t stale_token_warn_count_ = 0;
     
     /// Shared pointer to the latest merged motion sequence from ZMQ data.
     std::shared_ptr<MotionSequence> streamed_motion_;
@@ -165,9 +182,21 @@ public:
         
         // Initialize streamed motion buffer (reserve large capacity for streaming)
         ResetStreamedMotion();
+
+        if (const char* env = std::getenv("SONIC_TOKEN_STALE_FALLBACK_MS")) {
+            stale_token_fallback_ms_ = std::strtol(env, nullptr, 10);
+            if (stale_token_fallback_ms_ < 0) stale_token_fallback_ms_ = 0;
+        }
         
         std::cout << "[ZMQEndpointInterface] Connected to " << host << ":" << port 
                   << " topic='" << topic << "'" << std::endl;
+        if (stale_token_fallback_ms_ > 0) {
+            std::cout << "[ZMQEndpointInterface] Stale-token fallback: leave streaming mode after "
+                      << stale_token_fallback_ms_ << " ms without a new token (SONIC_TOKEN_STALE_FALLBACK_MS)" << std::endl;
+        } else {
+            std::cout << "[ZMQEndpointInterface] Stale-token fallback: OFF — the last token is HELD if the "
+                         "publisher stops (set SONIC_TOKEN_STALE_FALLBACK_MS=<ms> to auto-return to the reference motion)" << std::endl;
+        }
         std::cout << "[ZMQEndpointInterface] Press ENTER to toggle between loaded motions and ZMQ stream" << std::endl;
     }
     
@@ -381,6 +410,41 @@ public:
 
         // If ZMQ mode is active, use streamed motion data
         if (use_zmq_stream) {
+            // Stale-token watchdog: a latched token with no fresh message behind it.
+            {
+                bool fresh;
+                std::optional<std::chrono::steady_clock::time_point> last_rx;
+                {
+                    std::lock_guard<std::mutex> lock(data_mutex_);
+                    fresh = has_new_data_;
+                    last_rx = last_receive_time_;
+                }
+                const bool latched = has_external_token_state_.load();
+                if (fresh) {
+                    stale_token_warn_count_ = 0;
+                } else if (latched && last_rx.has_value()) {
+                    const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - *last_rx);
+                    if (age > STALE_TOKEN_WARN_MS) {
+                        if (stale_token_warn_count_++ % 50 == 0) {  // ~once per second at 50 Hz
+                            std::cout << "⚠ [Token Safety] WARNING: no new token for " << age.count()
+                                      << " ms — robot is HOLDING the last received token"
+                                      << (stale_token_fallback_ms_ > 0
+                                              ? " (fallback to reference motion at " + std::to_string(stale_token_fallback_ms_) + " ms)"
+                                              : " (press ENTER to return to the reference motion)")
+                                      << std::endl;
+                        }
+                        if (stale_token_fallback_ms_ > 0 && age.count() > stale_token_fallback_ms_) {
+                            DisableZmqAndReset(motion_reader, current_motion, current_frame,
+                                               operator_state, reinitialize_heading, current_motion_mutex,
+                                               "No token received for " + std::to_string(age.count())
+                                               + " ms (SONIC_TOKEN_STALE_FALLBACK_MS=" + std::to_string(stale_token_fallback_ms_) + ")");
+                            return;
+                        }
+                    }
+                }
+            }
+
             // Check and decode new network data if available
             std::shared_ptr<MotionSequence> new_motion;
             int frame_offset_adjustment = 0;
