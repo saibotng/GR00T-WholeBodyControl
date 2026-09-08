@@ -139,6 +139,9 @@ class DataCollectionLaunchConfig:
     data_exporter_frequency: int = 50
     """Data collection frequency (Hz) for the data exporter."""
 
+    extra_cameras: str = ""
+    """Comma-separated additional camera views for the data exporter (e.g. "head")."""
+
     record_wrist_cameras: bool = False
     """Record wrist camera streams (left_wrist, right_wrist) in the dataset."""
 
@@ -402,6 +405,8 @@ def main(config: DataCollectionLaunchConfig):
         exporter_cmd += f" --dataset-name '{config.dataset_name}'"
     if config.record_wrist_cameras:
         exporter_cmd += " --record-wrist-cameras"
+    if config.extra_cameras:
+        exporter_cmd += f" --extra-cameras '{config.extra_cameras}'"
     if not config.text_to_speech:
         exporter_cmd += " --no-text-to-speech"
 

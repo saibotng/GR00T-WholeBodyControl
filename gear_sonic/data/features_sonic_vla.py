@@ -395,6 +395,29 @@ def get_wrist_camera_modality_config() -> dict:
     }
 
 
+def get_extra_camera_features(names: list[str]) -> dict:
+    """Features for arbitrary additional camera views (e.g. ``head``).
+
+    Every composed-camera stream is 424x240; each name must match a view the
+    camera server publishes.
+    """
+    return {
+        f"observation.images.{name}": {
+            "dtype": "video",
+            "shape": [WRIST_VIEW_HEIGHT, WRIST_VIEW_WIDTH, 3],
+            "names": ["height", "width", "channel"],
+        }
+        for name in names
+    }
+
+
+def get_extra_camera_modality_config(names: list[str]) -> dict:
+    """Modality config entries for arbitrary additional camera views."""
+    return {
+        "video": {name: {"original_key": f"observation.images.{name}"} for name in names},
+    }
+
+
 def get_g1_robot_model(
     waist_location: Literal[
         "lower_body", "upper_body", "lower_and_upper_body"
