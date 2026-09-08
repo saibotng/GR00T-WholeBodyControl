@@ -1,0 +1,41 @@
+# Composed-camera-server configuration — THE single place to say which camera
+# is plugged in where. Consumed by gear_sonic.camera.run_from_config, which the
+# systemd unit (install: gear_sonic/scripts/install_camera_service.sh) execs.
+# Change a camera => edit this file, then: sudo systemctl restart composed_camera_server
+#
+# Views: ego_view, head, left_wrist, right_wrist. Omit or comment out unused views.
+# Per view:
+#   driver:  usb | realsense | oak | oak_mono | zed
+#   device:  how to find it —
+#            realsense/oak:  the serial / MxID, e.g. "317222070743"
+#            usb:            "/dev/v4l/by-path/..." (stable per PORT)
+#                            "/dev/v4l/by-id/..."   (stable per CAMERA; beware odd
+#                                                    characters — copy, never retype)
+#                            "match:<substring>"    (picks the by-id *-video-index0
+#                                                    entry containing it, e.g. "match:Spedal")
+#                            "/dev/video2" or a bare index
+#   rotate180: true          if the image is upside down (optional, default false)
+#
+# Current setup (2026-08-31 single-view): ONE Spedal 4K UVC cam as ego_view.
+# On the G1 it sat on USB port 2.1.3; on a PC use match:Spedal instead of a
+# by-path pin. History of previous layouts: the workspace docs/SITE.md.
+
+port: 5555
+fps: 30
+
+views:
+  ego_view:
+    driver: usb
+    device: "match:Spedal"
+    rotate180: false
+
+  # head:
+  #   driver: realsense
+  #   device: "317222070743"        # G1 head D435i
+  # left_wrist:
+  #   driver: realsense
+  #   device: "260522272405"        # D405
+  # right_wrist:
+  #   driver: usb
+  #   device: "/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1.2:1.0-video-index0"
+  #   rotate180: true
