@@ -35,6 +35,8 @@ from gear_sonic.data.features_sonic_vla import (
     get_features_sonic_vla,
     get_g1_robot_model,
     get_modality_config_sonic_vla,
+    get_extra_camera_features,
+    get_extra_camera_modality_config,
     get_wrist_camera_features,
     get_wrist_camera_modality_config,
 )
@@ -99,6 +101,10 @@ class SonicDataExporterConfig:
 
     record_wrist_cameras: bool = False
     """Record wrist camera streams (left_wrist, right_wrist). Requires cameras to be available."""
+
+    extra_cameras: str = ""
+    """Comma-separated additional camera views to record (e.g. "head"). Each must be
+    published by the camera server; recorded as observation.images.<name> at 424x240."""
 
     text_to_speech: bool = True
     """Use text-to-speech voice feedback."""
@@ -924,6 +930,16 @@ def main(config: SonicDataExporterConfig):
             else:
                 modality_config[key] = value
 
+    extra_cams = [c.strip() for c in config.extra_cameras.split(",") if c.strip()]
+    if extra_cams:
+        print(f"[Camera] Extra camera views enabled: {', '.join(extra_cams)} — adding to dataset schema")
+        dataset_features.update(get_extra_camera_features(extra_cams))
+        for key, value in get_extra_camera_modality_config(extra_cams).items():
+            if key in modality_config:
+                modality_config[key].update(value)
+            else:
+                modality_config[key] = value
+
     text_to_speech = TextToSpeech() if config.text_to_speech else None
 
     robot_config = poll_robot_config_zmq(
@@ -936,7 +952,8 @@ def main(config: SonicDataExporterConfig):
         features=dataset_features,
         modality_config=modality_config,
         task=config.task_prompt,
-        script_config={**robot_config, "record_wrist_cameras": config.record_wrist_cameras},
+        script_config={**robot_config, "record_wrist_cameras": config.record_wrist_cameras,
+                       "extra_cameras": config.extra_cameras},
     )
 
     data_collector = GrootDataCollector(
