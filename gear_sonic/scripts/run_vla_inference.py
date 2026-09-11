@@ -85,6 +85,10 @@ class InferenceConfig:
     camera_port: int = 5555
     """Camera server port."""
 
+    extra_cameras: str = ""
+    """Comma-separated additional camera views to feed the policy (e.g. "head"). Each must be
+    published by the camera server and be a video modality key of the served checkpoint."""
+
     # ZMQ: Robot state (from C++ zmq_output_handler, g1_debug topic)
     state_zmq_host: str = "localhost"
     """ZMQ host for robot state (g1_debug topic from C++ deploy)."""
@@ -211,14 +215,73 @@ def get_action_field(action_dict: dict, key: str, required: bool = True):
 # ---------------------------------------------------------------------------
 
 
+_last_missing_view_warning: dict[str, float] = {}
+
+
+def _warn_missing_camera_view(view: str, published: list[str], interval: float = 2.0):
+    """Rate-limited warning for a requested camera view the server does not publish."""
+    now = time.monotonic()
+    if now - _last_missing_view_warning.get(view, 0.0) < interval:
+        return
+    _last_missing_view_warning[view] = now
+    print(
+        f"[ERROR] camera view '{view}' is not in the camera message (published: {published}). "
+        "The policy needs it — check the camera server config.",
+        flush=True,
+    )
+
+
+def wait_for_camera_views(
+    camera_subscriber, required_views: tuple[str, ...], host: str, port: int, timeout: float = 30.0
+):
+    """Fail fast when the camera server does not publish every view the policy needs.
+
+    Waits for the first camera message, then compares its image keys against
+    ``required_views``. Without this the mismatch only surfaces as a missing-video-key
+    assertion inside the policy server, one inference attempt later.
+    """
+    if not required_views:
+        return
+
+    print(f"Waiting for camera views {list(required_views)} on {host}:{port} ...", flush=True)
+    deadline = time.monotonic() + timeout
+    message = None
+    while time.monotonic() < deadline:
+        message = camera_subscriber.read()
+        if message is not None:
+            break
+        time.sleep(0.2)
+
+    if message is None:
+        raise SystemExit(
+            f"ERROR: no camera message from {host}:{port} within {timeout:.0f}s — is the camera "
+            f"server running? (gear_sonic.camera.composed_camera / composed_camera_server.service)"
+        )
+
+    published = sorted(message["images"])
+    missing = [v for v in required_views if v not in published]
+    if missing:
+        raise SystemExit(
+            f"ERROR: camera server on {host}:{port} publishes {published}, but this policy needs "
+            f"{list(required_views)} (missing: {missing}). Enable the missing view(s) in the camera "
+            f"server config (gear_sonic/camera/camera_config.yaml) and restart it."
+        )
+    print_green(f"Camera views available: {published}")
+
+
 def prepare_observation_from_sensors(
     camera_subscriber,
     state_subscriber,
     robot_model,
     language_prompt: str,
     log_errors: bool = False,
+    extra_cameras: tuple[str, ...] = (),
 ):
     """Read sensors and prepare observation for the VLA policy.
+
+    Args:
+        extra_cameras: additional camera views (e.g. ``head``) the served checkpoint
+            expects on top of ``ego_view``/the wrist views.
 
     Returns:
         observation dict, or None if sensor data not yet available.
@@ -252,6 +315,16 @@ def prepare_observation_from_sensors(
         video["left_wrist"] = camera_msg["images"]["left_wrist"][np.newaxis, np.newaxis]
     if "right_wrist" in camera_msg["images"]:
         video["wrist_view"] = camera_msg["images"]["right_wrist"][np.newaxis, np.newaxis]
+
+    for view in extra_cameras:
+        image = camera_msg["images"].get(view)
+        if image is None:
+            # Never send a half observation: the policy server would only report a
+            # missing video key, and a view that disappears mid-run must not look
+            # like a healthy single-view run.
+            _warn_missing_camera_view(view, sorted(camera_msg["images"]))
+            return None
+        video[view] = image[np.newaxis, np.newaxis]
 
     observation = {
         "video": video,
@@ -388,6 +461,16 @@ def main(config: InferenceConfig):
     camera_subscriber = ComposedCameraClientSensor(
         server_ip=config.camera_host, port=config.camera_port
     )
+
+    extra_cams = tuple(c.strip() for c in config.extra_cameras.split(",") if c.strip())
+    if extra_cams:
+        print(f"[Camera] Extra camera views: {', '.join(extra_cams)}")
+        wait_for_camera_views(
+            camera_subscriber,
+            ("ego_view", *extra_cams),
+            config.camera_host,
+            config.camera_port,
+        )
 
     zmq_context = zmq.Context()
     zmq_socket = zmq_context.socket(zmq.PUB)
@@ -627,6 +710,7 @@ def main(config: InferenceConfig):
                 robot_model=robot_model,
                 language_prompt=language_prompt_ref[0],
                 log_errors=True,
+                extra_cameras=extra_cams,
             ),
             lambda obs: run_policy_inference_and_process(
                 policy=n1_policy,

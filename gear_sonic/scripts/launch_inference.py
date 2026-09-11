@@ -145,6 +145,10 @@ class InferenceLaunchConfig:
     camera_port: int = 5555
     """Camera server port."""
 
+    extra_cameras: str = ""
+    """Comma-separated additional camera views the checkpoint was trained on (e.g. "head").
+    Forwarded to the GR00T inference client; the camera server must publish them."""
+
     # Data exporter (optional recording during inference)
     data_exporter: bool = True
     """Start the data exporter pane for recording during inference."""
@@ -204,6 +208,11 @@ def _check_prerequisites(config: InferenceLaunchConfig):
             errors.append(".venv_teleop not found (needed for the psi0 client).")
         if not (repo_root / "psi_rtc_sonic_client.py").exists():
             errors.append("psi_rtc_sonic_client.py not found at the repo root.")
+        if config.extra_cameras:
+            print(
+                "WARNING: --extra-cameras is ignored with --policy-client psi0 "
+                "(psi_rtc_sonic_client.py handles its camera views itself).\n"
+            )
 
     if errors:
         print("ERROR: Prerequisites not met:\n")
@@ -296,6 +305,8 @@ def main(config: InferenceLaunchConfig):
     print(f"  Action rate:     {config.action_publish_rate} Hz")
     print(f"  Action horizon:  {config.action_horizon}")
     print(f"  Camera:          {config.camera_host}:{config.camera_port}")
+    if config.extra_cameras:
+        print(f"    Extra views:   {config.extra_cameras}")
     print(f"  Data exporter:   {'Yes' if config.data_exporter else 'No'}")
     if config.data_exporter:
         print(f"    DC frequency:  {config.data_exporter_frequency} Hz")
@@ -445,6 +456,8 @@ def main(config: InferenceLaunchConfig):
             f"--camera-host {config.camera_host} "
             f"--camera-port {config.camera_port}"
         )
+        if config.extra_cameras:
+            inference_cmd += f" --extra-cameras '{config.extra_cameras}'"
 
     print(f"Starting VLA inference pane ({config.policy_client})...")
     _send_to_pane(2, inference_cmd, wait=1.0)
