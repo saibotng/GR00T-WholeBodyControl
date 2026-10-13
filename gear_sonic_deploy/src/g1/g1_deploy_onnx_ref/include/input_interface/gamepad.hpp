@@ -151,7 +151,7 @@ class Gamepad : public InputInterface {
     bool motion_restart = false;   ///< Reset current motion to frame 0 (paused).
 
     bool start_control = false;    ///< Request control-system start.
-    bool stop_control = false;     ///< Request emergency stop.
+    bool stop_control = false;     ///< Request emergency stop (F2 bit = "F3" on the remote).
 
     bool delta_left = false;       ///< Nudge heading left  (+0.1 rad).
     bool delta_right = false;      ///< Nudge heading right (−0.1 rad).
@@ -184,7 +184,8 @@ class Gamepad : public InputInterface {
      * - A Button      - Play motion
      * - X/Y Buttons   - Reinitialize base quaternion and delta heading
      * - Start Button  - Start control
-     * - Select Button - Emergency Stop (kills all motion)
+     * - F2 bit ("F3" on the G1 remote) - Emergency Stop (kills all motion)
+     * - Select Button - (unused: it sits right next to F1, so the stop moved to F3)
      * - F1 Button - Toggle planner on/off
      * - D-pad L/R     - Delta heading left/right (+/-0.1 rad)
      * 
@@ -430,12 +431,11 @@ class Gamepad : public InputInterface {
           std::cout << "[GAMEPAD DEBUG] Start pressed - Start control" << std::endl;
         }
       }
-      // select - Emergency stop
-      if (select.on_press) { 
+      // F2 bit ("F3" on the G1 remote) - Emergency stop. Not Select: Select
+      // sits right next to F1 (planner toggle) and was too easy to hit by mistake.
+      if (F2.on_press) { 
         stop_control = true; 
-        if constexpr (DEBUG_LOGGING) {
-          std::cout << "[GAMEPAD DEBUG] Select pressed - Emergency Stop" << std::endl;
-        }
+        std::cout << "[Gamepad] F3 (F2 bit) pressed - Emergency Stop" << std::endl;
       }       
       // left/right - Delta heading left/right
       if (left.on_press) { 

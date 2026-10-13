@@ -13,7 +13,8 @@ The gamepad interface requires a physical Unitree wireless gamepad connected to 
 
 ```{admonition} Emergency Stop
 :class: danger
-Press **Select** at any time to immediately stop control and exit. Always keep a hand ready to press **Select**.
+Press **F3** at any time to immediately stop control and exit. Always keep a hand ready to press **F3**.
+(In this fork the stop moved from **Select** to **F3** — the remote's second function button, the `F2` bit in the SDK — because Select sits right next to **F1** and was easy to hit by mistake. Select does nothing.)
 ```
 
 ## Launch
@@ -34,7 +35,7 @@ Normal Mode plays back pre-loaded reference motions. This is the default mode wh
 6. To stop mid-motion and return to the first frame, press **B** — the robot pauses without terminating the policy.
 7. Use **D-pad Left / Right** to nudge the heading (±0.1 rad per press).
 8. Press **X** or **Y** to reinitialize the base quaternion and reset the heading to zero, i.e. robot will think the current facing is the facing at the first frame of the reference.
-9. When done, press **Select** to stop control and exit.
+9. When done, press **F3** to stop control and exit.
 
 ## Step-by-Step: Planner Mode (Real-time Motion Generation)
 
@@ -47,7 +48,7 @@ Planner Mode gives you analog stick control — steer with the left stick, aim t
 5. Hold **R2** to increase speed (for standing modes 1–3) or height (for squat modes 4–6). Hold **L2** to decrease. Speed/height changes by ±0.02 per frame while held.
 6. When the left stick is in the dead zone, standing modes automatically switch to Idle; squat/kneel modes hold their pose with speed 0.
 7. To pause, press **B** — the robot resets to Idle immediately. 
-8. Press **F1** again to return to Normal Mode, or **Select** to stop and exit.
+8. Press **F1** again to return to Normal Mode, or **F3** to stop and exit.
 
 ## Control Reference
 
@@ -56,7 +57,8 @@ Planner Mode gives you analog stick control — steer with the left stick, aim t
 | Button | Action |
 |--------|--------|
 | **Start** | Start control system |
-| **Select** | Stop control and exit (emergency stop) |
+| **F3** (`F2` bit) | Stop control and exit (emergency stop) |
+| **Select** | — (unused) |
 | **F1** | Toggle between Normal / Planner modes |
 | **X** or **Y** | Reinitialize base quaternion and reset heading |
 | **D-pad Left / Right** | Adjust delta heading (±0.1 rad) |
@@ -92,7 +94,7 @@ Planner Mode gives you analog stick control — steer with the left stick, aim t
 | Button | Action |
 |--------|--------|
 | **B** | Pause (reset to Idle) |
-| **Select** | Stop control and exit |
+| **F3** (`F2` bit) | Stop control and exit |
 
 ## Movement Modes
 
