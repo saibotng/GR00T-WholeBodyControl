@@ -41,7 +41,7 @@ Normal Mode plays back pre-loaded reference motions. This is the default mode wh
 
 Planner Mode gives you analog stick control — steer with the left stick, aim the facing direction with the right stick, and cycle through locomotion modes.
 
-1. From Normal Mode, press **F1** to switch to Planner Mode. The terminal will print `Planner enabled`.
+1. In this fork, switching the input manager to the gamepad (`@`, or "Gamepad" in the motion-server UI) **starts in Planner Mode directly** — no F1 press needed; the terminal prints `Planner enabled`. (From Normal Mode, **F1** switches to Planner Mode.)
 2. The robot starts in Slow Walk mode (mode 1). Push the **left stick forward** to walk — movement direction is computed from the stick angle relative to the current facing direction.
 3. Steer the **right stick left / right** to smoothly rotate the facing direction (continuous, ±0.02 rad per frame).
 4. Press **R1** to cycle to the next movement mode (Idle → Slow Walk → Walk → Run → Squat → Kneel Two Legs → Kneel → Idle → …). Press **L1** to cycle backward.
@@ -59,7 +59,7 @@ Planner Mode gives you analog stick control — steer with the left stick, aim t
 | **Start** | Start control system |
 | **F3** (`F2` bit) | Stop control and exit (emergency stop) |
 | **Select** | — (unused) |
-| **F1** | Toggle between Normal / Planner modes |
+| **F1** | Toggle between Normal / Planner modes (Planner is on when gamepad mode is entered) |
 | **X** or **Y** | Reinitialize base quaternion and reset heading |
 | **D-pad Left / Right** | Adjust delta heading (±0.1 rad) |
 

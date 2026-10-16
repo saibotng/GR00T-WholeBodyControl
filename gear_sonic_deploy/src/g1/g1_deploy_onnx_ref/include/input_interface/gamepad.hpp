@@ -13,7 +13,8 @@
  * The Gamepad supports two operational modes:
  *  - **Non-planner mode** – uses the face buttons and bumpers to cycle through
  *    pre-loaded reference motions and play/pause/restart them.
- *  - **Planner mode** (toggled with F1) – the left stick controls movement
+ *  - **Planner mode** (on when the gamepad becomes the active input — see
+ *    `planner_on_activate` — and toggled with F1) – the left stick controls movement
  *    direction, the right stick controls facing direction, and the bumpers
  *    switch between locomotion modes (idle / slow walk / walk / run / squat /
  *    kneel).  L2/R2 adjust speed or height depending on the current mode.
@@ -134,7 +135,7 @@ class Button {
  *
  * Supports two modes:
  *  - Reference-motion mode (default): L1/R1 cycle motions, A plays, B restarts.
- *  - Planner mode (toggled by F1):    sticks control direction / facing,
+ *  - Planner mode (on at activation, F1 toggles): sticks control direction / facing,
  *    L1/R1 change locomotion mode, L2/R2 adjust speed/height.
  */
 class Gamepad : public InputInterface {
@@ -159,6 +160,11 @@ class Gamepad : public InputInterface {
     bool reinitialize = false;     ///< Recapture the IMU base quaternion.
 
     bool use_planner = false;      ///< True when planner mode is active (toggle via F1).
+
+    /// Start in planner mode whenever the gamepad becomes the active input
+    /// (InterfaceManager switch → safety reset), so the operator can walk the
+    /// robot right away without pressing F1 first. F1 still toggles it.
+    bool planner_on_activate = true;
 
     // ------------------------------------------------------------------
     // Planner-mode state (persists across frames)
@@ -186,7 +192,7 @@ class Gamepad : public InputInterface {
      * - Start Button  - Start control
      * - F2 bit ("F3" on the G1 remote) - Emergency Stop (kills all motion)
      * - Select Button - (unused: it sits right next to F1, so the stop moved to F3)
-     * - F1 Button - Toggle planner on/off
+     * - F1 Button - Toggle planner on/off (planner is ON when gamepad mode is entered)
      * - D-pad L/R     - Delta heading left/right (+/-0.1 rad)
      * 
      * Non-Planner Mode:
@@ -208,9 +214,14 @@ class Gamepad : public InputInterface {
     void update() override {
       // Check for safety reset trigger from manager
       if (CheckAndClearSafetyReset()) {
-        use_planner = false;
+        // The reset (handle_input) first returns to the reference motion with
+        // the planner off; with planner_on_activate the planner then starts in
+        // the same pass exactly as on an F1 press (init wait + fallback).
+        use_planner = planner_on_activate;
         trigger_safety_reset = true;
-        std::cout << "[Gamepad] Safety reset triggered: will disable planner and return to reference motion" << std::endl;
+        std::cout << "[Gamepad] Safety reset triggered: return to reference motion"
+                  << (planner_on_activate ? ", then planner ON (F1 toggles)" : ", planner off")
+                  << std::endl;
       }
 
       // Reset input flags each frame
