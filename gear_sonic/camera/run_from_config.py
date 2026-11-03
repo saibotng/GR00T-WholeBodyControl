@@ -11,6 +11,11 @@ to something composed_camera accepts, prints the resolved plan, and execs
 so ps/systemd see the real server process. The systemd unit installed by
 gear_sonic/scripts/install_camera_service.sh points here — swapping a camera
 means editing the yaml and restarting the service, never the unit file.
+
+Optional per view, realsense only:  hd: true
+    capture at hd_dim (optional top-level, default [1280, 720]) and ALSO publish
+    '<view>_hd' (e.g. a Pico VR teleop view). '<view>' keeps its normal 424x240 but
+    is then downscaled from hd_dim, i.e. slightly different from native-424x240 data.
 """
 
 from __future__ import annotations
@@ -71,6 +76,7 @@ def main() -> None:
     cfg = _load(args.config)
     argv = [sys.executable, "-m", "gear_sonic.camera.composed_camera"]
     rotate: list[str] = []
+    hd: list[str] = []
 
     for view, spec in cfg["views"].items():
         if view not in VIEWS:
@@ -88,10 +94,19 @@ def main() -> None:
         argv += [f"--{prefix}-camera", driver, f"--{prefix}-device-id", device]
         if spec.get("rotate180"):
             rotate.append(view)
-        print(f"[camera-config] {view}: {driver} @ {device}" + (" (rotated 180°)" if spec.get("rotate180") else ""))
+        if spec.get("hd"):
+            if driver != "realsense":
+                _fail(f"{view}: 'hd: true' is only supported for driver realsense (got {driver})")
+            hd.append(view)
+        print(f"[camera-config] {view}: {driver} @ {device}"
+              + (" (rotated 180°)" if spec.get("rotate180") else "")
+              + (f" (+ {view}_hd)" if spec.get("hd") else ""))
 
     if rotate:
         argv += ["--rotate-180", ",".join(rotate)]
+    if hd:
+        hd_dim = cfg.get("hd_dim", [1280, 720])
+        argv += ["--hd-views", ",".join(hd), "--hd-width", str(hd_dim[0]), "--hd-height", str(hd_dim[1])]
     argv += ["--port", str(args.port or cfg.get("port", 5555)), "--fps", str(cfg.get("fps", 30))]
 
     print("[camera-config] exec:", " ".join(argv))

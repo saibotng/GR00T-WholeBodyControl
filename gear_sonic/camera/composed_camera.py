@@ -82,6 +82,16 @@ class ComposedCameraConfig:
     rotate_180: str = ""
     """Comma-separated mount positions to rotate 180 deg (e.g. "right_wrist")."""
 
+    hd_views: str = ""
+    """Comma-separated mount positions (realsense only) that capture at hd_width x hd_height and
+    additionally publish '<view>_hd'; '<view>' stays at its normal size (downscaled HD frame)."""
+
+    hd_width: int = 1280
+    """Capture width for hd_views."""
+
+    hd_height: int = 720
+    """Capture height for hd_views."""
+
     run_as_server: bool = True
     """Run as ZMQ PUB server (set False for in-process usage)."""
 
@@ -382,8 +392,12 @@ class ComposedCameraSensor(Sensor, SensorServer):
             rotate = mount_position in {
                 p.strip() for p in self.config.rotate_180.split(",") if p.strip()
             }
+            hd = mount_position in {p.strip() for p in self.config.hd_views.split(",") if p.strip()}
             return RealSenseSensor(
-                mount_position=mount_position, device_id=device_id, rotate_180=rotate
+                mount_position=mount_position,
+                device_id=device_id,
+                rotate_180=rotate,
+                hd_dim=(self.config.hd_width, self.config.hd_height) if hd else None,
             )
 
         elif camera_type.endswith(".mp4"):
