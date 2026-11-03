@@ -10,6 +10,7 @@ See https://github.com/IntelRealSense/librealsense for hardware-specific instruc
 import time
 from typing import Any
 
+import cv2
 import numpy as np
 
 try:
@@ -48,7 +49,11 @@ class RealSenseSensor(Sensor, SensorServer):
         device_id: str | None = None,
         rotate_180: bool = False,
         mount_position: str = CameraMountPosition.EGO_VIEW.value,
+        hd_dim: tuple[int, int] | None = None,
     ):
+        """hd_dim: capture color at this (w, h) instead and publish it additionally as
+        '<mount>_hd' (e.g. for a VR teleop view); '<mount>' itself is then the HD frame
+        downscaled (INTER_AREA) to config.color_image_dim, so consumers keep their size."""
         devices = rs.context().query_devices()
         if len(devices) == 0:
             raise RuntimeError("No RealSense devices found")
@@ -72,11 +77,13 @@ class RealSenseSensor(Sensor, SensorServer):
             serial = devices[id].get_info(rs.camera_info.serial_number)
         self.config.enable_device(serial)
 
+        self._hd_dim = tuple(hd_dim) if hd_dim else None
+        capture_dim = self._hd_dim or config.color_image_dim
         try:
             self.config.enable_stream(
                 rs.stream.color,
-                config.color_image_dim[0],
-                config.color_image_dim[1],
+                capture_dim[0],
+                capture_dim[1],
                 rs.format.rgb8,
                 config.fps,
             )
@@ -93,6 +100,8 @@ class RealSenseSensor(Sensor, SensorServer):
         print(
             f"Done initializing RealSense sensor: "
             f"{serial}"
+            + (f" (capture {capture_dim[0]}x{capture_dim[1]}, extra view {mount_position}_hd)"
+               if self._hd_dim else "")
         )
 
     def read(self) -> dict[str, Any] | None:
@@ -123,7 +132,15 @@ class RealSenseSensor(Sensor, SensorServer):
 
         current_time = time.time()
         timestamps = {self.mount_position: current_time}
-        images = {self.mount_position: color_image}
+        if self._hd_dim:
+            hd_key = f"{self.mount_position}_hd"
+            small = cv2.resize(
+                color_image, tuple(self._realsense_config.color_image_dim), interpolation=cv2.INTER_AREA
+            )
+            images = {self.mount_position: small, hd_key: color_image}
+            timestamps[hd_key] = current_time
+        else:
+            images = {self.mount_position: color_image}
         return {"timestamps": timestamps, "images": images}
 
     def serialize(self, data: dict[str, Any]) -> dict[str, Any]:
