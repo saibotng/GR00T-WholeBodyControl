@@ -12,22 +12,30 @@ so ps/systemd see the real server process. The systemd unit installed by
 gear_sonic/scripts/install_camera_service.sh points here — swapping a camera
 means editing the yaml and restarting the service, never the unit file.
 
-Optional per view, realsense only:  hd: true
-    capture at hd_dim (optional top-level, default [1280, 720]) and ALSO publish
-    '<view>_hd' (e.g. a Pico VR teleop view). '<view>' keeps its normal 424x240 but
-    is then downscaled from hd_dim, i.e. slightly different from native-424x240 data.
+View names are free (lowercase, digits, '_'); each view is published under its name.
+ego_view is what the data exporter always records and VLA inference reads.
+
+Optional per view (realsense, usb):  hd: true
+    publish that view at 1280x720 instead of the default 424x240 (same view name).
+    The data exporter records whatever size is published, so this is also the
+    resolution of recorded datasets. A RealSense needs a USB3 link for 1280x720@30.
 """
 
 from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
+import re
 import sys
 from pathlib import Path
 
-VIEWS = ("ego_view", "head", "left_wrist", "right_wrist")
+FIXED_VIEWS = ("ego_view", "head", "left_wrist", "right_wrist")  # any other name works too
+VIEW_NAME_RE = re.compile(r"[a-z][a-z0-9_]*")
 DRIVERS = ("usb", "realsense", "oak", "oak_mono", "zed")
+SD_RESOLUTION = (424, 240)  # driver default
+HD_RESOLUTION = (1280, 720)  # per view with `hd: true`
 
 
 def _fail(msg: str) -> "NoReturn":  # noqa: F821
@@ -76,13 +84,16 @@ def main() -> None:
     cfg = _load(args.config)
     argv = [sys.executable, "-m", "gear_sonic.camera.composed_camera"]
     rotate: list[str] = []
-    hd: list[str] = []
+    resolutions: list[str] = []
+    extra_views: dict[str, dict] = {}
+    configured: set[str] = set()
 
     for view, spec in cfg["views"].items():
-        if view not in VIEWS:
-            _fail(f"unknown view '{view}' (expected one of {', '.join(VIEWS)})")
+        if not VIEW_NAME_RE.fullmatch(str(view)):
+            _fail(f"view name '{view}' must be lowercase letters, digits and '_' (e.g. 'chest_cam')")
         if not spec:
             continue
+        configured.add(view)
         driver = spec.get("driver")
         if driver not in DRIVERS:
             _fail(f"{view}: driver must be one of {', '.join(DRIVERS)} (got {driver!r})")
@@ -90,23 +101,30 @@ def main() -> None:
         if device in (None, ""):
             _fail(f"{view}: 'device' is required")
         device = _resolve_usb(device) if driver == "usb" else str(device)
-        prefix = view.replace("_", "-")
-        argv += [f"--{prefix}-camera", driver, f"--{prefix}-device-id", device]
+        if view in FIXED_VIEWS:  # composed_camera has dedicated options for these
+            prefix = view.replace("_", "-")
+            argv += [f"--{prefix}-camera", driver, f"--{prefix}-device-id", device]
+        else:
+            extra_views[view] = {"camera": driver, "device_id": device}
         if spec.get("rotate180"):
             rotate.append(view)
-        if spec.get("hd"):
-            if driver != "realsense":
-                _fail(f"{view}: 'hd: true' is only supported for driver realsense (got {driver})")
-            hd.append(view)
-        print(f"[camera-config] {view}: {driver} @ {device}"
-              + (" (rotated 180°)" if spec.get("rotate180") else "")
-              + (f" (+ {view}_hd)" if spec.get("hd") else ""))
+        hd = bool(spec.get("hd"))
+        if hd:
+            if driver not in ("realsense", "usb"):
+                _fail(f"{view}: 'hd: true' is only supported for drivers realsense and usb (got {driver})")
+            resolutions.append(f"{view}={HD_RESOLUTION[0]}x{HD_RESOLUTION[1]}")
+        w, h = HD_RESOLUTION if hd else SD_RESOLUTION
+        print(f"[camera-config] {view}: {driver} @ {device} {w}x{h}"
+              + (" (rotated 180°)" if spec.get("rotate180") else ""))
 
+    if "ego_view" not in configured:
+        argv += ["--ego-view-camera", "None"]  # composed_camera defaults ego_view to an OAK
+    if extra_views:
+        argv += ["--extra-views", json.dumps(extra_views)]
     if rotate:
         argv += ["--rotate-180", ",".join(rotate)]
-    if hd:
-        hd_dim = cfg.get("hd_dim", [1280, 720])
-        argv += ["--hd-views", ",".join(hd), "--hd-width", str(hd_dim[0]), "--hd-height", str(hd_dim[1])]
+    if resolutions:
+        argv += ["--resolutions", ",".join(resolutions)]
     argv += ["--port", str(args.port or cfg.get("port", 5555)), "--fps", str(cfg.get("fps", 30))]
 
     print("[camera-config] exec:", " ".join(argv))
