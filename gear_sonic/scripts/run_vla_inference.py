@@ -253,7 +253,12 @@ def prepare_observation_from_sensors(
     if "left_wrist" in camera_msg["images"]:
         video["left_wrist"] = camera_msg["images"]["left_wrist"][np.newaxis, np.newaxis]
     if "right_wrist" in camera_msg["images"]:
-        video["wrist_view"] = camera_msg["images"]["right_wrist"][np.newaxis, np.newaxis]
+        right = camera_msg["images"]["right_wrist"][np.newaxis, np.newaxis]
+        # 3-cam checkpoints trained on our datasets (football_3cam, bpap) use the
+        # dataset key "right_wrist"; keep upstream's "wrist_view" alias too. The
+        # GR00T server only reads the keys its modality config lists, extras are ignored.
+        video["right_wrist"] = right
+        video["wrist_view"] = right
 
     for view in extra_cameras:
         image = camera_msg["images"].get(view)
