@@ -222,3 +222,63 @@ def pack_pose_message(pose_data: dict, topic: str = "pose", version: int = 3) ->
 
     packed_message = topic_bytes + header_bytes + data_bytes
     return packed_message
+
+
+def pack_latent_action_message(
+    motion_token: np.ndarray,
+    frame_index: np.ndarray,
+    left_hand_joints: np.ndarray = None,
+    right_hand_joints: np.ndarray = None,
+) -> bytes:
+    """Pack a single motion-token action into a ZMQ message (Protocol v4).
+
+    Shared by every producer of latent actions for the C++ deploy: the VLA
+    client (``run_vla_inference.py``) and the dataset replay
+    (``replay_tokens.py``).
+
+    Args:
+        motion_token: Shape ``[64]`` (flat) or ``[1, 64]``.
+        frame_index:  Shape ``[1]``.
+        left_hand_joints:  Shape ``[7]`` or ``[1, 7]``, optional.
+        right_hand_joints: Shape ``[7]`` or ``[1, 7]``, optional.
+
+    Returns:
+        Packed ZMQ message bytes.
+    """
+    motion_token = np.asarray(motion_token, dtype=np.float32)
+    frame_index = np.asarray(frame_index, dtype=np.int64)
+
+    if frame_index.ndim == 0:
+        frame_index = np.array([frame_index], dtype=np.int64)
+    elif frame_index.shape[0] != 1:
+        frame_index = frame_index[:1]
+
+    if motion_token.ndim == 1:
+        motion_token = motion_token.reshape(1, -1)
+
+    pose_data = {
+        "token_state": motion_token,
+        "frame_index": frame_index,
+    }
+
+    if left_hand_joints is not None:
+        left_hand_joints = np.asarray(left_hand_joints, dtype=np.float32)
+        if left_hand_joints.ndim == 1:
+            if left_hand_joints.shape[0] != 7:
+                raise ValueError(
+                    f"left_hand_joints must have shape [7], got {left_hand_joints.shape}"
+                )
+            left_hand_joints = left_hand_joints.reshape(1, 7)
+        pose_data["left_hand_joints"] = left_hand_joints
+
+    if right_hand_joints is not None:
+        right_hand_joints = np.asarray(right_hand_joints, dtype=np.float32)
+        if right_hand_joints.ndim == 1:
+            if right_hand_joints.shape[0] != 7:
+                raise ValueError(
+                    f"right_hand_joints must have shape [7], got {right_hand_joints.shape}"
+                )
+            right_hand_joints = right_hand_joints.reshape(1, 7)
+        pose_data["right_hand_joints"] = right_hand_joints
+
+    return pack_pose_message(pose_data, topic="pose", version=4)
