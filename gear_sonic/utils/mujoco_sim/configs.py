@@ -72,6 +72,7 @@ def override_wbc_config(
         "SIMULATE_DT": 1 / float(config.sim_frequency),
         "ENABLE_OFFSCREEN": config.enable_offscreen,
         "ENABLE_ONSCREEN": config.enable_onscreen,
+        "ENABLE_ELASTIC_BAND": config.enable_elastic_band,
         "model_path": config.wbc_model_path,
         "enable_waist": config.enable_waist,
         "with_hands": config.with_hands,
@@ -157,6 +158,13 @@ class BaseConfig(ArgsConfigTemplate):
 
     enable_onscreen: bool = True
     """Whether to enable onscreen rendering."""
+
+    enable_elastic_band: bool = True
+    """Whether to attach the virtual elastic band to the pelvis. The band is a stiff PD
+    constraint toward [0, 0, 1] with an upright-orientation term, so while it is on the
+    robot cannot translate, turn or lean — useful for bring-up, fatal for anything
+    involving locomotion. Also togglable at runtime with '9' in the MuJoCo window
+    ('7'/'8' shorten/lengthen it)."""
 
     enable_teleop_evaluator: bool = False
     """Whether to enable teleop evaluator."""
