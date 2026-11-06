@@ -104,7 +104,12 @@ class SonicDataExporterConfig:
 
     extra_cameras: str = ""
     """Comma-separated additional camera views to record (e.g. "head"). Each must be
-    published by the camera server; recorded as observation.images.<name> at 424x240."""
+    published by the camera server; recorded as observation.images.<name>."""
+
+    camera_probe_timeout: float = 10.0
+    """Seconds to wait for a camera message at startup. Every view is recorded at the
+    resolution the camera server publishes (camera_config.yaml `resolution`); a resumed
+    dataset must match the resolution it was created with."""
 
     text_to_speech: bool = True
     """Use text-to-speech voice feedback."""
@@ -203,6 +208,47 @@ class TimingThresholdMonitor:
         if time.monotonic() - self.last_failure_time > self.reset_timeout_sec:
             self.reset()
         return False
+
+
+def probe_camera_views(host: str, port: int, timeout: float) -> dict[str, tuple]:
+    """Return {view_name: image shape} from one camera-server message ({} on timeout)."""
+    client = ComposedCameraClientSensor(server_ip=host, port=port)
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            msg = client.read(blocking=False)
+            if msg and msg.get("images"):
+                return {k: tuple(np.asarray(v).shape) for k, v in msg["images"].items()}
+            time.sleep(0.05)
+        return {}
+    finally:
+        client.close()
+
+
+def apply_stream_shapes(features: dict, stream_shapes: dict[str, tuple]) -> None:
+    """For a NEW dataset: size each image feature to the resolution actually published."""
+    for name, info in features.items():
+        if info.get("dtype") not in ["image", "video"]:
+            continue
+        shape = stream_shapes.get(name.split(".")[-1])
+        if shape is not None:
+            info["shape"] = list(shape)
+
+
+def check_stream_shapes(features: dict, stream_shapes: dict[str, tuple]) -> None:
+    """Fail early if the published resolution differs from the dataset's stored one
+    (happens when resuming a dataset after changing the camera config)."""
+    for name, info in features.items():
+        if info.get("dtype") not in ["image", "video"]:
+            continue
+        view = name.split(".")[-1]
+        want, got = tuple(info["shape"]), stream_shapes.get(view)
+        if got is not None and got != want:
+            raise ValueError(
+                f"Dataset feature '{name}' is {want[1]}x{want[0]}, but the camera server "
+                f"publishes '{view}' at {got[1]}x{got[0]}. Record into a new dataset "
+                f"(different --dataset-name) or set the camera config back."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -940,6 +986,17 @@ def main(config: SonicDataExporterConfig):
             else:
                 modality_config[key] = value
 
+    stream_shapes = probe_camera_views(
+        config.camera_host, config.camera_port, config.camera_probe_timeout
+    )
+    if not stream_shapes:
+        print(f"[Camera] WARNING: no camera message within {config.camera_probe_timeout}s — "
+              f"new datasets get the default image size (424x240)")
+    else:
+        print(f"[Camera] Published views: "
+              + ", ".join(f"{k} {s[1]}x{s[0]}" for k, s in stream_shapes.items()))
+        apply_stream_shapes(dataset_features, stream_shapes)  # only used for a new dataset
+
     text_to_speech = TextToSpeech() if config.text_to_speech else None
 
     robot_config = poll_robot_config_zmq(
@@ -955,6 +1012,12 @@ def main(config: SonicDataExporterConfig):
         script_config={**robot_config, "record_wrist_cameras": config.record_wrist_cameras,
                        "extra_cameras": config.extra_cameras},
     )
+
+    # a resumed dataset keeps its stored size -> must match what is published now
+    check_stream_shapes(data_exporter.features, stream_shapes)
+    for name, info in data_exporter.features.items():
+        if info.get("dtype") in ["image", "video"]:
+            print(f"[Camera] recording {name} at {info['shape'][1]}x{info['shape'][0]}")
 
     data_collector = GrootDataCollector(
         frequency=config.data_collection_frequency,
