@@ -10,7 +10,12 @@ Starts the full data collection stack in a single tmux session:
     ├───────────────────────┼───────────────────────┤
     │ Pane 1: Teleop        │ Pane 3: Camera Viewer │
     │ (.venv_teleop)        │ (.venv_data_collection)│
+    │                       ├───────────────────────┤
+    │                       │ Pane 4: Ego View      │
+    │                       │ (pico_video_sender.py)│
     └───────────────────────┴───────────────────────┘
+    Pane 4 only with --ego-view-sender (default on): streams the ego camera to
+    the Pico headset (workspace scripts/pico_video_sender.py).
 
     Window 1 — sim  (only when --sim is passed):
     ┌─────────────────────────────────────────────────┐
@@ -30,6 +35,7 @@ Usage (from repo root — no venv activation needed):
     python gear_sonic/scripts/launch_data_collection.py                          # real robot (default)
     python gear_sonic/scripts/launch_data_collection.py --sim                    # MuJoCo sim
     python gear_sonic/scripts/launch_data_collection.py --no-camera-viewer       # skip viewer
+    python gear_sonic/scripts/launch_data_collection.py --no-ego-view-sender     # skip pico ego view
     python gear_sonic/scripts/launch_data_collection.py --pico-input-source isaac-teleop  # in-process CloudXR / DeviceIO
 """
 
@@ -164,6 +170,14 @@ class DataCollectionLaunchConfig:
     camera_port: int = 5555
     """Camera server port (shared by data exporter and viewer)."""
 
+    # Ego view sender (camera stream to the Pico headset)
+    ego_view_sender: bool = True
+    """Start pico_video_sender.py in pane 4 (ego camera -> Pico "Remote Vision")."""
+
+    ego_view_sender_script: str = ""
+    """Path to pico_video_sender.py. Leave empty for the workspace default
+    (<g1_vla_workspace>/scripts/pico_video_sender.py, two levels above this repo)."""
+
 
 SESSION_NAME = "sonic_data_collection"
 
@@ -220,8 +234,8 @@ def _kill_existing_session():
     )
 
 
-def _create_tmux_session():
-    """Create a 4-pane tmux layout."""
+def _create_tmux_session(ego_view_pane: bool = False):
+    """Create a 4-pane tmux layout (5 with the ego view pane)."""
     # Create detached session
     subprocess.run(
         ["tmux", "new-session", "-d", "-s", SESSION_NAME],
@@ -263,6 +277,13 @@ def _create_tmux_session():
         ["tmux", "split-window", "-t", f"{SESSION_NAME}:0.2", "-v"],
     )
 
+    # Split bottom-right pane vertically: new pane 4 below the camera viewer
+    # (splitting the last pane in layout order keeps panes 0-3 unchanged)
+    if ego_view_pane:
+        subprocess.run(
+            ["tmux", "split-window", "-t", f"{SESSION_NAME}:0.3", "-v"],
+        )
+
     # Let all pane shells finish initialization (.bashrc, conda, etc.)
     time.sleep(5)
 
@@ -294,6 +315,17 @@ def main(config: DataCollectionLaunchConfig):
     _check_prerequisites(config)
     _kill_existing_session()
 
+    # Ego view sender script lives in the g1_vla_workspace (two levels above this repo)
+    ego_view_script = None
+    if config.ego_view_sender:
+        ego_view_script = Path(
+            config.ego_view_sender_script
+            or repo_root.parent.parent / "scripts" / "pico_video_sender.py"
+        ).resolve()
+        if not ego_view_script.exists():
+            print(f"WARNING: {ego_view_script} not found — skipping ego view sender pane.")
+            ego_view_script = None
+
     print("=" * 60)
     print("  SONIC Data Collection Launcher")
     print("=" * 60)
@@ -307,13 +339,14 @@ def main(config: DataCollectionLaunchConfig):
     print(f"  Camera:          {config.camera_host}:{config.camera_port}")
     print(f"  DC frequency:    {config.data_exporter_frequency} Hz")
     print(f"  Camera viewer:   {'Yes' if config.camera_viewer else 'No'}")
+    print(f"  Ego view sender: {ego_view_script if ego_view_script else 'No'}")
     print(f"  Wrist cameras:   {'Yes' if config.record_wrist_cameras else 'No'}")
     print(f"  Text-to-speech:  {'Yes' if config.text_to_speech else 'No'}")
     print(f"  PC IP (for PICO): {_get_local_ip()}")
     print(f"  Teleop vis:      vr3pt={config.pico_vis_vr3pt} smpl={config.pico_vis_smpl}")
     print("=" * 60)
 
-    _create_tmux_session()
+    _create_tmux_session(ego_view_pane=ego_view_script is not None)
     print(f"Created tmux session: {SESSION_NAME}")
 
     # --- Window 1 (sim only): MuJoCo Simulator ---
@@ -401,6 +434,18 @@ def main(config: DataCollectionLaunchConfig):
         print("Starting camera viewer (pane 3)...")
         _send_to_pane(3, viewer_cmd, wait=2.0)
 
+    # --- Pane 4 (below viewer): Ego view sender -> Pico headset ---
+    if ego_view_script is not None:
+        ego_view_cmd = (
+            f"cd {repo_root} && "
+            f"source .venv_data_collection/bin/activate && "
+            f"python '{ego_view_script}' "
+            f"--camera-host {config.camera_host} "
+            f"--camera-port {config.camera_port}"
+        )
+        print("Starting ego view sender (pane 4)...")
+        _send_to_pane(4, ego_view_cmd, wait=1.0)
+
     # --- Pane 1 (top-right): Data Exporter ---
     exporter_cmd = (
         f"cd {repo_root} && "
@@ -444,6 +489,8 @@ def main(config: DataCollectionLaunchConfig):
     print("    Pane 2 (top-right):    Data Exporter  <-- you are here")
     if config.camera_viewer:
         print("    Pane 3 (bottom-right): Camera Viewer")
+    if ego_view_script is not None:
+        print("    Pane 4 (below viewer): Ego View sender (Pico headset)")
     print()
     print("  ** deploy.sh (pane 0) is waiting for confirmation —")
     print("     click on pane 0 and press Enter to proceed **")
