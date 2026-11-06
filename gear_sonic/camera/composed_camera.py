@@ -19,6 +19,7 @@ Run ``python -m gear_sonic.camera.composed_camera --help`` for all options.
 
 from collections import deque
 from dataclasses import dataclass
+import json
 import queue
 import threading
 import time
@@ -82,16 +83,6 @@ class ComposedCameraConfig:
     rotate_180: str = ""
     """Comma-separated mount positions to rotate 180 deg (e.g. "right_wrist")."""
 
-    hd_views: str = ""
-    """Comma-separated mount positions (realsense only) that capture at hd_width x hd_height and
-    additionally publish '<view>_hd'; '<view>' stays at its normal size (downscaled HD frame)."""
-
-    hd_width: int = 1280
-    """Capture width for hd_views."""
-
-    hd_height: int = 720
-    """Capture height for hd_views."""
-
     run_as_server: bool = True
     """Run as ZMQ PUB server (set False for in-process usage)."""
 
@@ -112,6 +103,27 @@ class ComposedCameraConfig:
 
     mjpeg_quality: int = 80
     """MJPEG quality 1-100 (only when use_mjpeg=True)."""
+
+    extra_views: str = ""
+    """Additional views with arbitrary names, as JSON:
+    '{"<name>": {"camera": "realsense", "device_id": "<serial>"}, ...}'. Each is published
+    under <name>, like the fixed ego_view/head/left_wrist/right_wrist options above."""
+
+    resolutions: str = ""
+    """Per-view published resolution, e.g. "ego_view=1280x720" (realsense and usb drivers;
+    run_from_config sets it for views with `hd: true`). Views not listed use the driver
+    default (424x240). A RealSense only accepts modes it supports."""
+
+    def resolution_for(self, mount_position: str) -> tuple[int, int] | None:
+        """(width, height) configured for a view in `resolutions`, else None."""
+        for item in self.resolutions.split(","):
+            if "=" not in item:
+                continue
+            view, res = item.split("=", 1)
+            if view.strip() == mount_position:
+                w, h = res.lower().split("x")
+                return int(w), int(h)
+        return None
 
     def __post_init__(self):
         self.run_as_server = self.server
@@ -197,6 +209,15 @@ class ComposedCameraSensor(Sensor, SensorServer):
                 "camera_type": self.config.right_wrist_camera,
                 "device_id": self.config.right_wrist_device_id,
             }
+
+        if self.config.extra_views:
+            for name, spec in json.loads(self.config.extra_views).items():
+                if name in camera_configs:
+                    raise ValueError(f"extra view '{name}' is already configured")
+                camera_configs[name] = {
+                    "camera_type": spec["camera"],
+                    "device_id": spec.get("device_id"),
+                }
 
         return camera_configs
 
@@ -392,12 +413,11 @@ class ComposedCameraSensor(Sensor, SensorServer):
             rotate = mount_position in {
                 p.strip() for p in self.config.rotate_180.split(",") if p.strip()
             }
-            hd = mount_position in {p.strip() for p in self.config.hd_views.split(",") if p.strip()}
             return RealSenseSensor(
                 mount_position=mount_position,
                 device_id=device_id,
                 rotate_180=rotate,
-                hd_dim=(self.config.hd_width, self.config.hd_height) if hd else None,
+                color_dim=self.config.resolution_for(mount_position),
             )
 
         elif camera_type.endswith(".mp4"):
@@ -410,6 +430,12 @@ class ComposedCameraSensor(Sensor, SensorServer):
             from gear_sonic.camera.drivers.usb_camera import USBCameraConfig, USBCameraSensor
 
             usb_config = USBCameraConfig()
+            res = self.config.resolution_for(mount_position)
+            if res is not None:
+                usb_config.output_dim = res
+                # capture at least as large as the published size
+                if res[0] > usb_config.image_dim[0] or res[1] > usb_config.image_dim[1]:
+                    usb_config.image_dim = res
             device: int | str
             try:
                 device = int(device_id) if device_id else 0
