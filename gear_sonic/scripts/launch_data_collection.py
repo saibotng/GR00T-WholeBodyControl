@@ -36,6 +36,8 @@ Usage (from repo root — no venv activation needed):
     python gear_sonic/scripts/launch_data_collection.py --sim                    # MuJoCo sim
     python gear_sonic/scripts/launch_data_collection.py --no-camera-viewer       # skip viewer
     python gear_sonic/scripts/launch_data_collection.py --no-ego-view-sender     # skip pico ego view
+    python gear_sonic/scripts/launch_data_collection.py --deploy-host g1new  # C++ deploy ON THE ROBOT (gear_sonic_deploy/ONBOARD.md)
+    python gear_sonic/scripts/launch_data_collection.py --dry-run   # print pane commands, start nothing
     python gear_sonic/scripts/launch_data_collection.py --pico-input-source isaac-teleop  # in-process CloudXR / DeviceIO
 """
 
@@ -74,6 +76,16 @@ def _bootstrap_venv():
 _bootstrap_venv()
 
 import tyro
+
+# this repo's gear_sonic, not whichever checkout the venv's editable install points at
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from gear_sonic.utils.remote_deploy import (  # noqa: E402
+    DEFAULT_REMOTE_REPO,
+    RemoteDeploy,
+    deploy_model_files,
+    preflight,
+    remote_deploy_pane_command,
+)
 
 
 def _get_local_ip() -> str:
@@ -124,6 +136,22 @@ class DataCollectionLaunchConfig:
 
     deploy_motor_kd_scale: str = ""
     """Kd scale specification for hardware motor indices (for example, 4,10=1.5)."""
+
+    # Onboard deploy
+    deploy_host: str = ""
+    """Run the C++ deploy ON THE ROBOT: SSH destination of its onboard computer (e.g.
+    'g1new' or 'unitree@192.168.123.164'). Pane 0 then runs deploy.sh there via ssh -t;
+    teleop, exporter and viewer stay on this workstation. Empty = deploy runs here."""
+
+    deploy_remote_repo: str = DEFAULT_REMOTE_REPO
+    """GR00T-WholeBodyControl checkout on the robot (only with --deploy-host)."""
+
+    deploy_skip_model_check: bool = False
+    """With --deploy-host: skip the sha256 comparison of the deploy model files
+    (decoder/encoder/obs config/planner) between workstation and robot."""
+
+    dry_run: bool = False
+    """Print the pane commands (after the --deploy-host preflight) and exit; starts nothing."""
 
     # Teleop streamer options
     pico_manager: bool = True
@@ -180,6 +208,8 @@ class DataCollectionLaunchConfig:
 
 
 SESSION_NAME = "sonic_data_collection"
+
+_DRY_RUN = False
 
 
 def _check_prerequisites(config: DataCollectionLaunchConfig):
@@ -291,6 +321,9 @@ def _create_tmux_session(ego_view_pane: bool = False):
 def _send_to_pane(pane_index: int, cmd: str, wait: float = 1.0):
     """Send a command string to a tmux pane."""
     target = f"{SESSION_NAME}:0.{pane_index}"
+    if _DRY_RUN:
+        print(f"[dry-run] pane {pane_index}: {cmd}")
+        return
 
     subprocess.run(
         ["tmux", "send-keys", "-t", target, cmd, "C-m"],
@@ -300,6 +333,8 @@ def _send_to_pane(pane_index: int, cmd: str, wait: float = 1.0):
 
 def _check_pane_alive(pane_index: int) -> bool:
     """Check if a tmux pane's process is still running."""
+    if _DRY_RUN:
+        return True
     target = f"{SESSION_NAME}:0.{pane_index}"
     result = subprocess.run(
         ["tmux", "list-panes", "-t", target, "-F", "#{pane_dead}"],
@@ -310,10 +345,35 @@ def _check_pane_alive(pane_index: int) -> bool:
 
 
 def main(config: DataCollectionLaunchConfig):
+    global _DRY_RUN
+    _DRY_RUN = config.dry_run
     repo_root = Path(__file__).resolve().parent.parent.parent
 
     _check_prerequisites(config)
-    _kill_existing_session()
+
+    # Onboard deploy: resolve the link and check the robot's checkout/models first
+    remote = None
+    robot_ip = None
+    deploy_zmq_host = config.deploy_zmq_host
+    if config.deploy_host:
+        if config.sim:
+            sys.exit("ERROR: --deploy-host and --sim are exclusive (the sim runs on this machine).")
+        remote = RemoteDeploy(config.deploy_host, config.deploy_remote_repo)
+        print(f"Onboard deploy preflight ({config.deploy_host})...")
+        robot_ip, workstation_ip = preflight(
+            remote,
+            repo_root,
+            deploy_model_files(
+                config.deploy_checkpoint, config.deploy_obs_config, config.deploy_planner
+            ),
+            config.deploy_skip_model_check,
+        )
+        if deploy_zmq_host == "localhost":
+            # the deploy SUBscribes to the teleop pose stream on this workstation
+            deploy_zmq_host = workstation_ip
+
+    if not _DRY_RUN:
+        _kill_existing_session()
 
     # Ego view sender script lives in the g1_vla_workspace (two levels above this repo)
     ego_view_script = None
@@ -330,6 +390,11 @@ def main(config: DataCollectionLaunchConfig):
     print("  SONIC Data Collection Launcher")
     print("=" * 60)
     print(f"  Mode:            {'Simulation' if config.sim else 'Real Robot'}")
+    if remote:
+        print(f"  Deploy:          ON THE ROBOT  {remote.host}:{remote.remote_repo}")
+        print(f"                   robot {robot_ip} -> pose from {deploy_zmq_host}:5556")
+    else:
+        print("  Deploy:          this workstation")
     print(f"  Task prompt:     {config.task_prompt}")
     print(f"  Dataset name:    {config.dataset_name or '(auto)'}")
     print(f"  Deploy input:    {config.deploy_input_type}")
@@ -346,11 +411,12 @@ def main(config: DataCollectionLaunchConfig):
     print(f"  Teleop vis:      vr3pt={config.pico_vis_vr3pt} smpl={config.pico_vis_smpl}")
     print("=" * 60)
 
-    _create_tmux_session(ego_view_pane=ego_view_script is not None)
-    print(f"Created tmux session: {SESSION_NAME}")
+    if not _DRY_RUN:
+        _create_tmux_session(ego_view_pane=ego_view_script is not None)
+        print(f"Created tmux session: {SESSION_NAME}")
 
     # --- Window 1 (sim only): MuJoCo Simulator ---
-    if config.sim:
+    if config.sim and not _DRY_RUN:
         subprocess.run(
             ["tmux", "new-window", "-t", SESSION_NAME, "-n", "sim"],
         )
@@ -375,27 +441,29 @@ def main(config: DataCollectionLaunchConfig):
 
     # --- Pane 0 (top-left): C++ Deploy ---
     deploy_mode = "sim" if config.sim else "real"
-    deploy_cmd = (
-        f"cd {repo_root / 'gear_sonic_deploy'} && "
-        f"./deploy.sh "
+    deploy_args = (
         f"--input-type {config.deploy_input_type} "
-        f"--zmq-host {config.deploy_zmq_host} "
+        f"--zmq-host {deploy_zmq_host} "
     )
     if config.deploy_checkpoint:
-        deploy_cmd += f"--cp {config.deploy_checkpoint} "
+        deploy_args += f"--cp {config.deploy_checkpoint} "
     if config.deploy_obs_config:
-        deploy_cmd += f"--obs-config {config.deploy_obs_config} "
+        deploy_args += f"--obs-config {config.deploy_obs_config} "
     if config.deploy_planner:
-        deploy_cmd += f"--planner {config.deploy_planner} "
+        deploy_args += f"--planner {config.deploy_planner} "
     if config.deploy_motion_data:
-        deploy_cmd += f"--motion-data {config.deploy_motion_data} "
+        deploy_args += f"--motion-data {config.deploy_motion_data} "
     if config.deploy_output_type:
-        deploy_cmd += f"--output-type {config.deploy_output_type} "
+        deploy_args += f"--output-type {config.deploy_output_type} "
     if config.deploy_motor_kp_scale:
-        deploy_cmd += f"--motor-kp-scale {config.deploy_motor_kp_scale} "
+        deploy_args += f"--motor-kp-scale {config.deploy_motor_kp_scale} "
     if config.deploy_motor_kd_scale:
-        deploy_cmd += f"--motor-kd-scale {config.deploy_motor_kd_scale} "
-    deploy_cmd += deploy_mode
+        deploy_args += f"--motor-kd-scale {config.deploy_motor_kd_scale} "
+    deploy_args += deploy_mode
+    if remote:
+        deploy_cmd = remote_deploy_pane_command(remote, deploy_args, env={})
+    else:
+        deploy_cmd = f"cd {repo_root / 'gear_sonic_deploy'} && ./deploy.sh {deploy_args}"
 
     print("Starting C++ deploy (pane 0)...")
     _send_to_pane(0, deploy_cmd, wait=3.0)
@@ -458,6 +526,9 @@ def main(config: DataCollectionLaunchConfig):
     )
     if config.dataset_name:
         exporter_cmd += f" --dataset-name '{config.dataset_name}'"
+    if robot_ip:
+        # robot state (g1_debug, :5557) comes from the deploy on the robot
+        exporter_cmd += f" --state-zmq-host {robot_ip}"
     if config.record_wrist_cameras:
         exporter_cmd += " --record-wrist-cameras"
     if config.extra_cameras:
@@ -467,6 +538,10 @@ def main(config: DataCollectionLaunchConfig):
 
     print("Starting data exporter (pane 1)...")
     _send_to_pane(2, exporter_cmd, wait=1.0)
+
+    if _DRY_RUN:
+        print("[dry-run] nothing started")
+        return
 
     # Select the data exporter pane so the user lands there for interactive input
     subprocess.run(
@@ -495,6 +570,12 @@ def main(config: DataCollectionLaunchConfig):
     print("  ** deploy.sh (pane 0) is waiting for confirmation —")
     print("     click on pane 0 and press Enter to proceed **")
     print()
+    if remote:
+        print("  ** The deploy runs ON THE ROBOT (pane 0 = ssh session). Keys typed there,")
+        print("     incl. O = e-stop, only reach it while the link is up. If the link drops,")
+        print("     the deploy keeps running on the robot (code says: planner timeout -> IDLE\n     after 1 s without pose messages; not verified on the robot).")
+        print(f"     Hard stop from any terminal: ssh {remote.host} pkill -9 -f g1_deploy_onnx_ref **")
+        print()
     print("  Controls:")
     print("    Ctrl+b, arrow keys  - Switch between panes")
     if config.sim:
