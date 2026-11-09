@@ -62,3 +62,57 @@ The first deploy start on the Orin builds its TensorRT engines (`*.trt` next to 
 - **Wireless remote.** The deploy can read the Unitree remote (`gamepad_manager` /
   `interface_manager`), which works without the network. The launchers' input types do not
   use it.
+
+## Standalone teleop (no workstation)
+
+PICO whole-body teleop with **everything on the robot**: PICO PC service, pico manager and deploy.
+The headset connects straight to the robot over Wi-Fi, and a laptop only SSHes in to start and
+stop. Teleop only: no exporter, no cameras (the camera server is stopped for the session).
+
+```
+PICO --WiFi :63901--> Orin [PICO service -> pico manager -:5556-> deploy] --DDS--> motors
+laptop --WiFi ssh--> Orin (tmux session "teleop")
+```
+
+**One-time, on the robot** (on top of the onboard deploy setup above; needs internet, no sudo).
+Fetch the real LFS files first. If the clone has placeholders, `install_pico.sh` skips building the
+PICO SDK library and the binding fails with `libPXREARobotSDK.so: file format not recognized`:
+```bash
+cd ~/tng/GR00T-WholeBodyControl && git lfs pull --include="gear_sonic/**,external_dependencies/**"
+```
+```bash
+bash install_scripts/install_pico.sh
+```
+The script's last step (`isaacteleop[cloudxr]`) is only for `--input-source isaac-teleop` and may
+be skipped.
+This creates `.venv_teleop` (CPU torch, xrobotoolkit_sdk built for aarch64). Then unpack the ARM
+PICO service into the home directory. It runs headless, and no `dpkg -i` is needed:
+```bash
+mkdir -p /tmp/rs && dpkg-deb -x ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/roboticsservice_1.0.0.0_arm64.deb /tmp/rs && mv /tmp/rs/opt/apps/roboticsservice ~/roboticsservice && rm -rf /tmp/rs
+```
+Copy `scripts/teleop_onboard.sh` into the robot checkout and add the aliases to `~/.bashrc`:
+```bash
+alias teleop='bash ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/scripts/teleop_onboard.sh'
+alias teleop-stop='bash ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/scripts/teleop_onboard.sh --stop'
+```
+
+**Each session:**
+1. Robot and router on. The robot's Wi-Fi must be on the router's network (see
+   `docs/WIRELESS_TELEOP_SETUP.md` B9).
+2. Laptop: cable to the robot → `ssh g1new` → read the robot's Wi-Fi IP
+   (`ip -4 -br addr | grep wl`). Switch the laptop to the same Wi-Fi and `ssh unitree@<that IP>`
+   (or an alias), then unplug the cable.
+3. On the robot: `teleop`. It prints the IP for the PICO app and attaches to tmux. Pane 0 may ask
+   for the sudo password (`jetson_clocks`), then Enter at `Proceed with deployment?`.
+4. PICO: same Wi-Fi → XRoboToolkit app → the robot's Wi-Fi IP → WORKING → Calibrate →
+   A+B+X+Y → A+X.
+5. Stop: PICO **A+B+X+Y** or `O` in pane 0; hard stop `teleop-stop`. Detaching tmux (Ctrl+b d) or
+   losing the laptop's SSH does **not** stop anything. The PICO stop keeps working without the
+   laptop, because the headset talks to the robot directly.
+
+Harmless in pane 1: `bash: /opt/apps/roboticsservice/runService.sh: No such file or directory`.
+The pico manager tries to start the service itself, but pane 2 already runs it.
+For predictable boots near the router, prefer its Wi-Fi:
+`sudo nmcli con mod G1-data-collection-5G connection.autoconnect-priority 10`.
+
+Options: `teleop --release` (release checkpoint instead of low-latency), `teleop --keep-cameras`.
