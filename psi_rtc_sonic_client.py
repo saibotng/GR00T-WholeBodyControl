@@ -91,12 +91,29 @@ class ComposedCamera:
         self._sensor = ComposedCameraClientSensor(server_ip=host, port=port)
 
     def get_frames(self):
-        """dict of payload_key -> RGB frame for every view present in the stream."""
+        """dict of payload_key -> RGB frame for every view present in the stream.
+
+        Blocks until a fresh message carrying ego_view arrives (never returns a stale
+        frame). While waiting it warns every 2 s — a dead camera server used to make
+        the client hang silently, which looked like a policy/server problem."""
+        t0 = last_warn = time.time()
         while True:
-            msg = self._sensor.read(blocking=True)
-            imgs = (msg or {}).get("images", {})
-            if "ego_view" in imgs:
-                return {self.VIEW_KEYS[k]: v for k, v in imgs.items() if k in self.VIEW_KEYS}
+            if not self._sensor.socket.poll(500):
+                imgs = None
+            else:
+                msg = self._sensor.read(blocking=True)
+                imgs = (msg or {}).get("images", {})
+                if "ego_view" in imgs:
+                    return {self.VIEW_KEYS[k]: v for k, v in imgs.items() if k in self.VIEW_KEYS}
+            now = time.time()
+            if now - last_warn >= 2.0:
+                if imgs is None:
+                    print(f"[Camera] WARNING: no camera frames for {now - t0:.0f}s — "
+                          f"is the robot's camera server publishing?", flush=True)
+                else:
+                    print(f"[Camera] WARNING: no 'ego_view' in the camera stream for {now - t0:.0f}s "
+                          f"(views: {sorted(imgs)})", flush=True)
+                last_warn = now
 
     def get_frame(self):
         return self.get_frames()["observation.images.egocentric"]
