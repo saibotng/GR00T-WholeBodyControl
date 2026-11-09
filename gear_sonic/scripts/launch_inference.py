@@ -30,6 +30,8 @@ Usage (from repo root — no venv activation needed):
     python gear_sonic/scripts/launch_inference.py                        # real robot
     python gear_sonic/scripts/launch_inference.py --sim                  # MuJoCo sim
     python gear_sonic/scripts/launch_inference.py --no-data-exporter     # no recording pane
+    python gear_sonic/scripts/launch_inference.py --deploy-host g1new  # C++ deploy ON THE ROBOT (gear_sonic_deploy/ONBOARD.md)
+    python gear_sonic/scripts/launch_inference.py --dry-run   # print pane commands, start nothing
 """
 
 from dataclasses import dataclass
@@ -69,6 +71,16 @@ def _bootstrap_venv():
 _bootstrap_venv()
 
 import tyro
+
+# this repo's gear_sonic, not whichever checkout the venv's editable install points at
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from gear_sonic.utils.remote_deploy import (  # noqa: E402
+    DEFAULT_REMOTE_REPO,
+    RemoteDeploy,
+    deploy_model_files,
+    preflight,
+    remote_deploy_pane_command,
+)
 
 
 def _get_local_ip() -> str:
@@ -118,6 +130,28 @@ class InferenceLaunchConfig:
 
     deploy_motor_kd_scale: str = ""
     """Kd scale specification for hardware motor indices (for example, 4,10=1.5)."""
+
+    deploy_token_stale_fallback_ms: int = 0
+    """Passed to the deploy as SONIC_TOKEN_STALE_FALLBACK_MS: leave token streaming and return
+    to the reference motion after this many ms without a new token. 0 = deploy default
+    (hold the last token). Matters most with --deploy-host, where a dropped link stops
+    the token stream but not the deploy. Not yet tested on the robot."""
+
+    # Onboard deploy
+    deploy_host: str = ""
+    """Run the C++ deploy ON THE ROBOT: SSH destination of its onboard computer (e.g.
+    'g1new' or 'unitree@192.168.123.164'). Pane 0 then runs deploy.sh there via ssh -t;
+    the policy client and exporter stay on this workstation. Empty = deploy runs here."""
+
+    deploy_remote_repo: str = DEFAULT_REMOTE_REPO
+    """GR00T-WholeBodyControl checkout on the robot (only with --deploy-host)."""
+
+    deploy_skip_model_check: bool = False
+    """With --deploy-host: skip the sha256 comparison of the deploy model files
+    (decoder/encoder/obs config/planner) between workstation and robot."""
+
+    dry_run: bool = False
+    """Print the pane commands (after the --deploy-host preflight) and exit; starts nothing."""
 
     # VLA inference options
     policy_client: str = "gr00t"
@@ -170,6 +204,8 @@ class InferenceLaunchConfig:
 
 
 SESSION_NAME = "sonic_inference"
+
+_DRY_RUN = False
 
 
 def _check_prerequisites(config: InferenceLaunchConfig):
@@ -266,6 +302,9 @@ def _create_tmux_session():
 
 def _send_to_pane(pane_index: int, cmd: str, wait: float = 1.0):
     target = f"{SESSION_NAME}:0.{pane_index}"
+    if _DRY_RUN:
+        print(f"[dry-run] pane {pane_index}: {cmd}")
+        return
     subprocess.run(
         ["tmux", "send-keys", "-t", target, cmd, "C-m"],
     )
@@ -273,6 +312,8 @@ def _send_to_pane(pane_index: int, cmd: str, wait: float = 1.0):
 
 
 def _check_pane_alive(pane_index: int) -> bool:
+    if _DRY_RUN:
+        return True
     target = f"{SESSION_NAME}:0.{pane_index}"
     result = subprocess.run(
         ["tmux", "list-panes", "-t", target, "-F", "#{pane_dead}"],
@@ -283,10 +324,35 @@ def _check_pane_alive(pane_index: int) -> bool:
 
 
 def main(config: InferenceLaunchConfig):
+    global _DRY_RUN
+    _DRY_RUN = config.dry_run
     repo_root = Path(__file__).resolve().parent.parent.parent
 
     _check_prerequisites(config)
-    _kill_existing_session()
+
+    # Onboard deploy: resolve the link and check the robot's checkout/models first
+    remote = None
+    robot_ip = None
+    deploy_zmq_host = config.deploy_zmq_host
+    if config.deploy_host:
+        if config.sim:
+            sys.exit("ERROR: --deploy-host and --sim are exclusive (the sim runs on this machine).")
+        remote = RemoteDeploy(config.deploy_host, config.deploy_remote_repo)
+        print(f"Onboard deploy preflight ({config.deploy_host})...")
+        robot_ip, workstation_ip = preflight(
+            remote,
+            repo_root,
+            deploy_model_files(
+                config.deploy_checkpoint, config.deploy_obs_config, config.deploy_planner
+            ),
+            config.deploy_skip_model_check,
+        )
+        if deploy_zmq_host == "localhost":
+            # the deploy SUBscribes to the policy client's token stream on this workstation
+            deploy_zmq_host = workstation_ip
+
+    if not _DRY_RUN:
+        _kill_existing_session()
 
     exporter_prompt = config.task_prompt if config.task_prompt else config.prompt
 
@@ -304,6 +370,13 @@ def main(config: InferenceLaunchConfig):
     print("  SONIC VLA Inference Launcher")
     print("=" * 60)
     print(f"  Mode:            {'Simulation' if config.sim else 'Real Robot'}")
+    if remote:
+        print(f"  Deploy:          ON THE ROBOT  {remote.host}:{remote.remote_repo}")
+        print(f"                   robot {robot_ip} -> tokens from {deploy_zmq_host}:5556")
+    else:
+        print("  Deploy:          this workstation")
+    if config.deploy_token_stale_fallback_ms:
+        print(f"  Stale fallback:  {config.deploy_token_stale_fallback_ms} ms")
     print(f"  Policy client:   {config.policy_client}")
     print(f"  PolicyServer:    {config.policy_host}:{policy_port}")
     print(f"  Embodiment:      {config.embodiment_tag}")
@@ -320,11 +393,12 @@ def main(config: InferenceLaunchConfig):
     print(f"  PC IP:           {_get_local_ip()}")
     print("=" * 60)
 
-    _create_tmux_session()
-    print(f"Created tmux session: {SESSION_NAME}")
+    if not _DRY_RUN:
+        _create_tmux_session()
+        print(f"Created tmux session: {SESSION_NAME}")
 
     # --- Window 1 (sim only): MuJoCo Simulator ---
-    if config.sim:
+    if config.sim and not _DRY_RUN:
         subprocess.run(
             ["tmux", "new-window", "-t", SESSION_NAME, "-n", "sim"],
         )
@@ -349,10 +423,8 @@ def main(config: InferenceLaunchConfig):
     # --- Pane 0 (top-left): C++ Deploy ---
     deploy_mode = "sim" if config.sim else "real"
     deploy_cmd = (
-        f"cd {repo_root / 'gear_sonic_deploy'} && "
-        f"./deploy.sh "
         f"--input-type {deploy_input_type} "
-        f"--zmq-host {config.deploy_zmq_host} "
+        f"--zmq-host {deploy_zmq_host} "
     )
     if config.deploy_checkpoint:
         deploy_cmd += f"--cp {config.deploy_checkpoint} "
@@ -369,6 +441,14 @@ def main(config: InferenceLaunchConfig):
     if config.deploy_motor_kd_scale:
         deploy_cmd += f"--motor-kd-scale {config.deploy_motor_kd_scale} "
     deploy_cmd += deploy_mode
+    deploy_env = {}
+    if config.deploy_token_stale_fallback_ms:
+        deploy_env["SONIC_TOKEN_STALE_FALLBACK_MS"] = str(config.deploy_token_stale_fallback_ms)
+    if remote:
+        deploy_cmd = remote_deploy_pane_command(remote, deploy_cmd, deploy_env)
+    else:
+        env_prefix = "".join(f"{k}={v} " for k, v in deploy_env.items())
+        deploy_cmd = f"cd {repo_root / 'gear_sonic_deploy'} && {env_prefix}./deploy.sh {deploy_cmd}"
 
     print("Starting C++ deploy (pane 0)...")
     _send_to_pane(0, deploy_cmd, wait=3.0)
@@ -434,6 +514,9 @@ def main(config: InferenceLaunchConfig):
         )
         if config.dataset_name:
             exporter_cmd += f" --dataset-name '{config.dataset_name}'"
+        if robot_ip:
+            # robot state (g1_debug, :5557) comes from the deploy on the robot
+            exporter_cmd += f" --state-zmq-host {robot_ip}"
 
         print("Starting data exporter (pane 3)...")
         _send_to_pane(3, exporter_cmd, wait=2.0)
@@ -452,6 +535,9 @@ def main(config: InferenceLaunchConfig):
             f"--camera-protocol composed "
             f"--instruction '{config.prompt}'"
         )
+        if robot_ip:
+            # state from the robot's deploy; its token PUB already binds *:5556
+            inference_cmd += f" --zmq-host {robot_ip}"
     else:
         inference_cmd = (
             f"cd {repo_root} && "
@@ -468,9 +554,16 @@ def main(config: InferenceLaunchConfig):
         )
         if config.extra_cameras:
             inference_cmd += f" --extra-cameras '{config.extra_cameras}'"
+        if robot_ip:
+            # state from the robot's deploy; tokens must be reachable from the robot
+            inference_cmd += f" --state-zmq-host {robot_ip} --action-zmq-host '*'"
 
     print(f"Starting VLA inference pane ({config.policy_client})...")
     _send_to_pane(2, inference_cmd, wait=1.0)
+
+    if _DRY_RUN:
+        print("[dry-run] nothing started")
+        return
 
     # Select the VLA inference pane
     subprocess.run(
@@ -497,6 +590,13 @@ def main(config: InferenceLaunchConfig):
     print("  ** deploy.sh (pane 0) is waiting for confirmation --")
     print("     click on pane 0 and press Enter to proceed **")
     print()
+    if remote:
+        print("  ** The deploy runs ON THE ROBOT (pane 0 = ssh session). Keys typed there,")
+        print("     incl. O = e-stop, only reach it while the link is up. If the link drops,")
+        print("     the deploy keeps running on the robot and HOLDS the last token unless")
+        print("     --deploy-token-stale-fallback-ms is set (not verified on the robot).")
+        print(f"     Hard stop from any terminal: ssh {remote.host} pkill -9 -f g1_deploy_onnx_ref **")
+        print()
     print("  Keyboard controls (type in pane 1):")
     print("    p        - Pause / resume inference")
     print("    k        - Start / stop C++ control loop")
