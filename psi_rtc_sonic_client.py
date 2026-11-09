@@ -73,6 +73,30 @@ def convert_numpy_in_dict(data, func):
         return data
 
 
+# ---------------- Dex3 hand joint order ----------------
+# Psi0 SONIC datasets (raw_sonic_to_psi_lerobot.py) take the hands from
+# observation.state / action.wbc, which the data exporter writes in the robot
+# model's (URDF / pinocchio) joint order:
+#     index_0, index_1, middle_0, middle_1, thumb_0, thumb_1, thumb_2
+# The robot state (left/right_hand_q) and the controller's hand command
+# (left/right_hand_joints -> Dex3 motors) use the Dex3 actuator order:
+#     thumb_0, thumb_1, thumb_2, index_0, index_1, middle_0, middle_1
+# (robot_model.get_hand_actuated_joint_indices("left") == [26,27,28,22,23,24,25]).
+# Without these permutations the policy sees scrambled hand state and its hand
+# actions land on the wrong fingers (thumbs get index/middle targets, index and
+# middle get the thumb targets -> only one finger curls).
+HAND_URDF_FROM_DEX3 = [3, 4, 5, 6, 0, 1, 2]   # urdf[k] = dex3[HAND_URDF_FROM_DEX3[k]]
+HAND_DEX3_FROM_URDF = [4, 5, 6, 0, 1, 2, 3]   # dex3[k] = urdf[HAND_DEX3_FROM_URDF[k]]
+
+
+def hand_dex3_to_urdf(q):
+    return np.asarray(q)[HAND_URDF_FROM_DEX3]
+
+
+def hand_urdf_to_dex3(q):
+    return np.asarray(q)[HAND_DEX3_FROM_URDF]
+
+
 # ---------------- RSCamera ----------------
 class ComposedCamera:
     """Views from gear_sonic's composed camera server (ZMQ PUB, msgpack) —
@@ -274,7 +298,8 @@ class RTCWebSocketClient:
         if action.ndim > 1:
             action = action[0]
 
-        hand_joints = action[64:78]
+        # policy hands are in URDF order (left 7, right 7) -> Dex3 actuator order
+        hand_joints = np.concatenate([hand_urdf_to_dex3(action[64:71]), hand_urdf_to_dex3(action[71:78])])
         token_ori = action[:64]
         token_qtz = fsq_quantize(token_ori)
 
@@ -336,8 +361,9 @@ class RTCWebSocketClient:
                 states_list = []
                 for state in states:
                     body_q    = np.array(state["body_q_measured"],   dtype=np.float32)
-                    left_hand_states = np.array(state["left_hand_q"], dtype=np.float32)
-                    right_hand_states = np.array(state["right_hand_q"], dtype=np.float32)
+                    # robot reports Dex3 actuator order; the policy was trained on URDF order
+                    left_hand_states = hand_dex3_to_urdf(np.array(state["left_hand_q"], dtype=np.float32))
+                    right_hand_states = hand_dex3_to_urdf(np.array(state["right_hand_q"], dtype=np.float32))
 
                     state = np.concatenate((body_q, left_hand_states, right_hand_states), axis=0)
                     states_list.append(state)
