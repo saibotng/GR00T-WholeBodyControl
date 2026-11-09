@@ -206,13 +206,14 @@ class G1Deploy {
     std::array<double, 17> upper_body_joint_velocities_buffer_;
     std::vector<double> token_state_data_;  // Token buffer (size from config)
 
-    // Token-source transition ramp (env SONIC_TOKEN_RAMP_MS, 0/unset = off = legacy).
+    // Token-source transition ramp (env SONIC_TOKEN_RAMP_MS, default 1000 ms, 0 = off = legacy).
     // When the decoder's token source switches — local encoder of the reference
     // motion <-> external stream (ZMQ streaming ENTER on/off, stale fallback) — the
     // token fed to the decoder is blended from the last token it saw to the new
     // source over this many ms (cosine ease), instead of switching in one tick.
     // Dex3 hand targets are blended over the same window. Steady state is untouched.
-    int token_ramp_ms_ = 0;
+    static constexpr int kDefaultTokenRampMs = 1000;
+    int token_ramp_ms_ = kDefaultTokenRampMs;
     bool token_ramp_active_ = false;
     bool token_ramp_have_last_ = false;
     bool token_ramp_last_src_external_ = false;
@@ -2458,11 +2459,19 @@ class G1Deploy {
         std::cout << "✓ Token state buffer initialized (size: " << encoder_config_.dimension << ")" << std::endl;
       }
       if (const char* env = std::getenv("SONIC_TOKEN_RAMP_MS")) {
-        try { token_ramp_ms_ = std::max(0, std::stoi(env)); } catch (...) { token_ramp_ms_ = 0; }
+        try { token_ramp_ms_ = std::max(0, std::stoi(env)); }
+        catch (...) {
+          std::cerr << "⚠ SONIC_TOKEN_RAMP_MS='" << env << "' is not an integer — using the default "
+                    << kDefaultTokenRampMs << " ms" << std::endl;
+          token_ramp_ms_ = kDefaultTokenRampMs;
+        }
       }
       if (token_ramp_ms_ > 0) {
         std::cout << "✓ Token source transitions are blended over " << token_ramp_ms_
-                  << " ms (SONIC_TOKEN_RAMP_MS) — body via the token, Dex3 hands via their targets" << std::endl;
+                  << " ms (SONIC_TOKEN_RAMP_MS, default " << kDefaultTokenRampMs
+                  << ") — body via the token, Dex3 hands via their targets" << std::endl;
+      } else {
+        std::cout << "Token source transitions switch in one tick (SONIC_TOKEN_RAMP_MS=0)" << std::endl;
       }
       
       // =========================================================================
