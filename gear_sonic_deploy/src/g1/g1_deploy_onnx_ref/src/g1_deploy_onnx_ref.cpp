@@ -205,6 +205,26 @@ class G1Deploy {
     std::array<double, 17> upper_body_joint_positions_buffer_;
     std::array<double, 17> upper_body_joint_velocities_buffer_;
     std::vector<double> token_state_data_;  // Token buffer (size from config)
+
+    // Token-source transition ramp (env SONIC_TOKEN_RAMP_MS, 0/unset = off = legacy).
+    // When the decoder's token source switches — local encoder of the reference
+    // motion <-> external stream (ZMQ streaming ENTER on/off, stale fallback) — the
+    // token fed to the decoder is blended from the last token it saw to the new
+    // source over this many ms (cosine ease), instead of switching in one tick.
+    // Dex3 hand targets are blended over the same window. Steady state is untouched.
+    int token_ramp_ms_ = 0;
+    bool token_ramp_active_ = false;
+    bool token_ramp_have_last_ = false;
+    bool token_ramp_last_src_external_ = false;
+    double token_ramp_w_ = 1.0;   // current blend weight of the NEW source (1 = no blend)
+    std::chrono::steady_clock::time_point token_ramp_t0_;
+    std::vector<double> token_ramp_start_;
+    std::vector<double> token_ramp_last_;
+    std::array<double, 7> hand_ramp_start_left_{};
+    std::array<double, 7> hand_ramp_start_right_{};
+    std::array<double, 7> hand_last_cmd_left_{};
+    std::array<double, 7> hand_last_cmd_right_{};
+    bool hand_have_last_cmd_ = false;
     
     // =========================================================================
     // Motion data, current motion, and recording
@@ -1661,11 +1681,62 @@ class G1Deploy {
     //      GatherInputInterfaceData() from ZMQ / ROS2.
     // =========================================================================
 
+    /// Blend the token just written to target_buffer[offset, offset+dim) when its source
+    /// switched (see token_ramp_ms_). Only touches the decoder input, never token_state_data_
+    /// (which the external path re-copies each tick), so a blend can never feed back into itself.
+    void ApplyTokenRamp(std::vector<double>& target_buffer, size_t offset, size_t dim, bool src_external) {
+      token_ramp_w_ = 1.0;
+      if (token_ramp_ms_ <= 0) return;
+      const auto now = std::chrono::steady_clock::now();
+      if (token_ramp_have_last_ && src_external != token_ramp_last_src_external_
+          && token_ramp_last_.size() == dim) {
+        // restart from what the decoder saw last tick (also correct if a ramp is mid-way)
+        token_ramp_start_ = token_ramp_last_;
+        hand_ramp_start_left_ = hand_last_cmd_left_;
+        hand_ramp_start_right_ = hand_last_cmd_right_;
+        token_ramp_t0_ = now;
+        token_ramp_active_ = true;
+        std::cout << "[Token Ramp] source -> " << (src_external ? "external stream" : "reference motion")
+                  << ", blending over " << token_ramp_ms_ << " ms" << std::endl;
+      }
+      if (token_ramp_active_) {
+        const double a = std::chrono::duration<double, std::milli>(now - token_ramp_t0_).count() / token_ramp_ms_;
+        if (a >= 1.0) {
+          token_ramp_active_ = false;
+          std::cout << "[Token Ramp] done" << std::endl;
+        } else {
+          token_ramp_w_ = 0.5 - 0.5 * std::cos(M_PI * std::max(0.0, a));   // smooth start and end
+          for (size_t i = 0; i < dim; ++i) {
+            target_buffer[offset + i] = (1.0 - token_ramp_w_) * token_ramp_start_[i]
+                                        + token_ramp_w_ * target_buffer[offset + i];
+          }
+        }
+      }
+      token_ramp_last_.assign(target_buffer.begin() + offset, target_buffer.begin() + offset + dim);
+      token_ramp_have_last_ = true;
+      token_ramp_last_src_external_ = src_external;
+    }
+
+    /// Blend the Dex3 hand targets with the same weight as the running token ramp.
+    void ApplyHandRamp() {
+      if (token_ramp_ms_ > 0 && token_ramp_active_ && hand_have_last_cmd_) {
+        const double w = token_ramp_w_;
+        for (int i = 0; i < 7; ++i) {
+          left_hand_joint_buffer_[i] = (1.0 - w) * hand_ramp_start_left_[i] + w * left_hand_joint_buffer_[i];
+          right_hand_joint_buffer_[i] = (1.0 - w) * hand_ramp_start_right_[i] + w * right_hand_joint_buffer_[i];
+        }
+      }
+      hand_last_cmd_left_ = left_hand_joint_buffer_;
+      hand_last_cmd_right_ = right_hand_joint_buffer_;
+      hand_have_last_cmd_ = true;
+    }
+
     /// Populate the token_state observation (either from local encoder or external data).
     bool GatherTokenState(std::vector<double>& target_buffer, size_t offset) {
       if (!is_using_encoder_) {
         // No encoder configured; use token_state_data_ (can be set externally via ROS2/ZMQ)
         std::copy(token_state_data_.begin(), token_state_data_.end(), target_buffer.begin() + offset);
+        ApplyTokenRamp(target_buffer, offset, token_state_data_.size(), /*src_external=*/true);
         return true;
       }
 
@@ -1702,6 +1773,7 @@ class G1Deploy {
         token_state_data_[i] = v;
         target_buffer[offset + i] = v;
       }
+      ApplyTokenRamp(target_buffer, offset, token_dim, /*src_external=*/false);
       return true;
     }
 
@@ -2384,6 +2456,13 @@ class G1Deploy {
       if (encoder_config_.dimension > 0) {
         token_state_data_.resize(encoder_config_.dimension, 0.0);
         std::cout << "✓ Token state buffer initialized (size: " << encoder_config_.dimension << ")" << std::endl;
+      }
+      if (const char* env = std::getenv("SONIC_TOKEN_RAMP_MS")) {
+        try { token_ramp_ms_ = std::max(0, std::stoi(env)); } catch (...) { token_ramp_ms_ = 0; }
+      }
+      if (token_ramp_ms_ > 0) {
+        std::cout << "✓ Token source transitions are blended over " << token_ramp_ms_
+                  << " ms (SONIC_TOKEN_RAMP_MS) — body via the token, Dex3 hands via their targets" << std::endl;
       }
       
       // =========================================================================
@@ -4004,6 +4083,9 @@ class G1Deploy {
           // Update Dex3 hands max close ratio from keyboard-controlled value (X/C keys)
           dex3_hands_.SetMaxCloseRatio(input_interface_->GetMaxCloseRatio());
           
+          // blend hand targets during a token-source transition (no-op unless SONIC_TOKEN_RAMP_MS)
+          ApplyHandRamp();
+
           // set hand poses (use buffered data for consistency)
           dex3_hands_.setAllJointsCommand(true, left_hand_joint_buffer_);
           dex3_hands_.setAllJointsCommand(false, right_hand_joint_buffer_);
