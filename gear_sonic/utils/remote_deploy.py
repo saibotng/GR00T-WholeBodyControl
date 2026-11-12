@@ -123,21 +123,40 @@ def check_remote_models(
     return problems
 
 
-def check_remote_deploy_code(remote: RemoteDeploy, local_repo: Path) -> list[str]:
-    """Compare the gear_sonic_deploy source tree (git tree hash) workstation vs robot.
+# What the robot's deploy is built and run from, relative to the repo root. Docs, docker, the
+# MuJoCo scene files etc. are left out so they don't trigger the warning; the policy/planner
+# files are compared separately by sha256 (check_remote_models).
+DEPLOY_CODE_PATHS = (
+    "gear_sonic_deploy/src",
+    "gear_sonic_deploy/cmake",
+    "gear_sonic_deploy/thirdparty",
+    "gear_sonic_deploy/CMakeLists.txt",
+    "gear_sonic_deploy/.justfile",
+    "gear_sonic_deploy/deploy.sh",
+    "gear_sonic_deploy/scripts",
+    "gear_sonic_deploy/reference",
+)
 
-    The robot builds and runs its own checkout. A different tree means different
+
+def check_remote_deploy_code(remote: RemoteDeploy, local_repo: Path) -> list[str]:
+    """Compare the deploy's build inputs (DEPLOY_CODE_PATHS) workstation vs robot.
+
+    The robot builds and runs its own checkout. Different build inputs mean different
     C++ than the workstation's. That is a warning, not an error.
     """
+    paths = " ".join(DEPLOY_CODE_PATHS)
+
     def script(repo: str) -> str:
-        # line 1: tree hash; a second line only if tracked files are modified
+        # line 1: hash over the blob ids of all build inputs at HEAD;
+        # a second line only if one of them is modified in the working tree
         return (
-            f"cd {repo} && git rev-parse HEAD:gear_sonic_deploy && "
-            f"git status --porcelain -- gear_sonic_deploy | grep -v '^??' | head -1"
+            f"set -o pipefail; cd {repo} && "
+            f"h=$(git ls-tree -r HEAD -- {paths} | sha256sum | cut -c1-12) && echo \"$h\" && "
+            f"{{ git status --porcelain -- {paths} | grep -v '^??' | head -1; true; }}"
         )
 
     def parse(res: subprocess.CompletedProcess) -> tuple[str, bool]:
-        lines = res.stdout.splitlines()
+        lines = res.stdout.splitlines() if res.returncode == 0 else []
         return (lines[0] if lines else ""), len(lines) > 1
 
     warnings = []
@@ -150,13 +169,13 @@ def check_remote_deploy_code(remote: RemoteDeploy, local_repo: Path) -> list[str
         warnings.append(f"could not read the robot checkout {remote.host}:{remote.remote_repo}")
     elif local_tree != remote_tree:
         warnings.append(
-            f"gear_sonic_deploy differs: workstation tree {local_tree[:10]}, robot {remote_tree[:10]} "
-            f"(the robot runs its own checkout — pull it to the same commit)"
+            f"deploy code differs (src/cmake/thirdparty/deploy.sh/…): workstation {local_tree}, "
+            f"robot {remote_tree} (the robot builds its own checkout — bring it to the same C++)"
         )
     if remote_dirty:
-        warnings.append("robot checkout has uncommitted changes in gear_sonic_deploy")
+        warnings.append("robot checkout has uncommitted changes in the deploy code")
     if local_dirty:
-        warnings.append("workstation checkout has uncommitted changes in gear_sonic_deploy")
+        warnings.append("workstation checkout has uncommitted changes in the deploy code")
     return warnings
 
 
