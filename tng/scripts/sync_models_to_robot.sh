@@ -2,8 +2,8 @@
 # Copy the deploy's ONNX models (policy/ + planner/) from this workstation to the robot's
 # checkout, for running the C++ deploy onboard (launch_*.py --deploy-host).
 #
-#   gear_sonic_deploy/scripts/sync_models_to_robot.sh <ssh-host> [remote-repo] [--dry-run]
-#   e.g. gear_sonic_deploy/scripts/sync_models_to_robot.sh g1new
+#   tng/scripts/sync_models_to_robot.sh <ssh-host> [remote-repo] [--dry-run]
+#   e.g. tng/scripts/sync_models_to_robot.sh g1new
 #
 # Only *.onnx files are copied. TensorRT engines (*.trt) are built per GPU and stay
 # out: the robot builds its own on the first deploy start, which can take minutes.
@@ -21,7 +21,7 @@ if [[ $# -gt 0 && "$1" != --* ]]; then REMOTE_REPO="$1"; shift; fi
 DRY=()
 if [[ "${1:-}" == "--dry-run" ]]; then DRY=(--dry-run); fi
 
-DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../gear_sonic_deploy" && pwd)"
 cd "$DEPLOY_DIR"
 
 echo "Syncing ONNX models: $DEPLOY_DIR/{policy,planner} -> $HOST:$REMOTE_REPO/gear_sonic_deploy/"

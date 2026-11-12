@@ -4,14 +4,14 @@
 # the workstation (the robot's checkout does not need this script):
 #
 #   ssh g1new 'cd ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy && bash -s' \
-#       < gear_sonic_deploy/scripts/check_onboard.sh
+#       < tng/scripts/check_onboard.sh
 
 ok()   { echo "  [ok]   $*"; }
 warn() { echo "  [warn] $*"; }
 bad()  { echo "  [FAIL] $*"; FAIL=1; }
 FAIL=0
 # run as a file: work in its gear_sonic_deploy dir; via stdin (bash -s): stay in $PWD
-if [[ -f "${BASH_SOURCE[0]:-}" ]]; then cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1; fi
+if [[ -f "${BASH_SOURCE[0]:-}" ]]; then cd "$(dirname "${BASH_SOURCE[0]}")/../../gear_sonic_deploy" || exit 1; fi
 [[ -f deploy.sh ]] || { echo "run from gear_sonic_deploy/ (deploy.sh not in $PWD)"; exit 1; }
 # the deploy pane runs `bash -ic`, so take TensorRT_ROOT from ~/.bashrc like it does
 TensorRT_ROOT=${TensorRT_ROOT:-$(bash -ic 'printf %s "$TensorRT_ROOT"' 2>/dev/null </dev/null)}
@@ -61,7 +61,7 @@ echo "== Models (deploy.sh defaults + low_latency)"
 for f in policy/release/model_decoder.onnx policy/release/model_encoder.onnx \
          policy/low_latency/model_decoder.onnx policy/low_latency/model_encoder.onnx \
          planner/target_vel/V2/planner_sonic.onnx; do
-    [[ -f "$f" ]] && ok "$f" || warn "$f missing (scripts/sync_models_to_robot.sh on the workstation)"
+    [[ -f "$f" ]] && ok "$f" || warn "$f missing (tng/scripts/sync_models_to_robot.sh on the workstation)"
 done
 
 echo "== Network"

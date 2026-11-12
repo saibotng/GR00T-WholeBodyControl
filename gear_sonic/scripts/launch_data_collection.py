@@ -36,7 +36,7 @@ Usage (from repo root — no venv activation needed):
     python gear_sonic/scripts/launch_data_collection.py --sim                    # MuJoCo sim
     python gear_sonic/scripts/launch_data_collection.py --no-camera-viewer       # skip viewer
     python gear_sonic/scripts/launch_data_collection.py --no-ego-view-sender     # skip pico ego view
-    python gear_sonic/scripts/launch_data_collection.py --deploy-host g1new  # C++ deploy ON THE ROBOT (gear_sonic_deploy/ONBOARD.md)
+    python gear_sonic/scripts/launch_data_collection.py --deploy-host g1new  # C++ deploy ON THE ROBOT (tng/ONBOARD.md)
     python gear_sonic/scripts/launch_data_collection.py --dry-run   # print pane commands, start nothing
     python gear_sonic/scripts/launch_data_collection.py --pico-input-source isaac-teleop  # in-process CloudXR / DeviceIO
 """
