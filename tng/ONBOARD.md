@@ -24,7 +24,13 @@ Upstream reference: `docs/source/getting_started/installation_deploy.md`, `docs/
 3. `sudo apt-get install -y nvidia-l4t-dla-compiler libcudla-dev-12-6`
 4. TensorRT **10.7** aarch64 TAR (JetPack 6) → `~/TensorRT`, and `export TensorRT_ROOT=$HOME/TensorRT`
    in `~/.bashrc` (the deploy pane runs `bash -ic`, so `.bashrc` is sourced).
-5. In the robot checkout (`~/tng/GR00T-WholeBodyControl`, branch `tng`): `cd gear_sonic_deploy && bash scripts/install_deps.sh`.
+5. Real LFS files in the robot checkout (`~/tng/GR00T-WholeBodyControl`, branch `tng`):
+   `git lfs pull --include="gear_sonic_deploy/**"`. Check that
+   `gear_sonic_deploy/thirdparty/unitree_sdk2/lib/aarch64/libunitree_sdk2.a` is ~28 MB, not
+   133 bytes; with placeholders the build fails at link time (`file format not recognized`).
+   Without internet on the robot, copy them from the workstation:
+   `docs/WIRELESS_TELEOP_SETUP.md` B3 in the workspace.
+6. In the robot checkout: `cd gear_sonic_deploy && bash scripts/install_deps.sh`.
 
 ## Before each session (workstation)
 
@@ -90,7 +96,15 @@ PICO service into the home directory. It runs headless, and no `dpkg -i` is need
 ```bash
 mkdir -p /tmp/rs && dpkg-deb -x ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/roboticsservice_1.0.0.0_arm64.deb /tmp/rs && mv /tmp/rs/opt/apps/roboticsservice ~/roboticsservice && rm -rf /tmp/rs
 ```
-Copy `tng/scripts/teleop_onboard.sh` into the robot checkout and add the aliases to `~/.bashrc`:
+The robot's checkout is on `tng`, which doesn't contain the script until this branch is merged.
+Copy it from the workstation, in two commands:
+```bash
+ssh g1new mkdir -p tng/GR00T-WholeBodyControl/tng/scripts
+```
+```bash
+scp /home/innovation-hacking/luebbet/g1_vla_workspace/external/wbc/tng/scripts/teleop_onboard.sh g1new:tng/GR00T-WholeBodyControl/tng/scripts/
+```
+Then add the aliases to the robot's `~/.bashrc`:
 ```bash
 alias teleop='bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh'
 alias teleop-stop='bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh --stop'
