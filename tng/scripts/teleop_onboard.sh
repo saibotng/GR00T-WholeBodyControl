@@ -3,9 +3,9 @@
 # pico manager and the C++ deploy run on the onboard Orin. The headset connects straight to the
 # robot's Wi-Fi IP. A laptop only SSHes in to start/stop. Teleop only: no exporter, no cameras.
 #
-# Run ON THE ROBOT (alias "teleop", see ONBOARD.md "Standalone teleop"):
-#   bash ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/scripts/teleop_onboard.sh [--keep-cameras] [--release]
-#   bash ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/scripts/teleop_onboard.sh --stop   (alias "teleop-stop")
+# Run ON THE ROBOT (alias "teleop", see tng/ONBOARD.md "Standalone teleop"):
+#   bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh [--keep-cameras] [--release]
+#   bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh --stop   (alias "teleop-stop")
 #
 # tmux session "teleop": pane 0 = deploy, pane 1 = pico manager, pane 2 = PICO service.
 # Detach with Ctrl+b d (keeps running), re-attach with: tmux attach -t teleop
@@ -40,7 +40,7 @@ if [[ $STOP == 1 ]]; then
     pkill -f pico_manager_thread_server 2>/dev/null
     exit 0
 fi
-[[ -x "$RS_DIR/RoboticsServiceProcess" ]] || die "PICO service missing in $RS_DIR (see ONBOARD.md)"
+[[ -x "$RS_DIR/RoboticsServiceProcess" ]] || die "PICO service missing in $RS_DIR (see tng/ONBOARD.md)"
 [[ -f "$REPO/.venv_teleop/bin/activate" ]] || die "$REPO/.venv_teleop missing (bash install_scripts/install_pico.sh)"
 [[ -x "$REPO/gear_sonic_deploy/target/release/g1_deploy_onnx_ref" ]] || die "deploy not built (just build)"
 command -v tmux >/dev/null || die "tmux missing (sudo apt-get install -y tmux)"

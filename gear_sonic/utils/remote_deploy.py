@@ -217,7 +217,7 @@ def preflight(
             raise SystemExit(
                 "ERROR: deploy model files on the robot do not match the workstation:\n"
                 f"{msg}\n"
-                "  Sync them: gear_sonic_deploy/scripts/sync_models_to_robot.sh "
+                "  Sync them: tng/scripts/sync_models_to_robot.sh "
                 f"{remote.host} {remote.remote_repo}\n"
                 "  (or --deploy-skip-model-check if the difference is intended)"
             )

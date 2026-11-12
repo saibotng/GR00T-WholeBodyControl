@@ -30,9 +30,9 @@ Upstream reference: `docs/source/getting_started/installation_deploy.md`, `docs/
 
 ```bash
 # models: copies *.onnx (never *.trt) into the robot checkout
-gear_sonic_deploy/scripts/sync_models_to_robot.sh g1new
+tng/scripts/sync_models_to_robot.sh g1new
 # readiness (read-only)
-ssh g1new 'cd ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy && bash -s' < gear_sonic_deploy/scripts/check_onboard.sh
+ssh g1new 'cd ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy && bash -s' < tng/scripts/check_onboard.sh
 # preflight + printed pane commands, starts nothing
 python gear_sonic/scripts/launch_data_collection.py --deploy-host g1new --dry-run
 ```
@@ -90,10 +90,10 @@ PICO service into the home directory. It runs headless, and no `dpkg -i` is need
 ```bash
 mkdir -p /tmp/rs && dpkg-deb -x ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/roboticsservice_1.0.0.0_arm64.deb /tmp/rs && mv /tmp/rs/opt/apps/roboticsservice ~/roboticsservice && rm -rf /tmp/rs
 ```
-Copy `scripts/teleop_onboard.sh` into the robot checkout and add the aliases to `~/.bashrc`:
+Copy `tng/scripts/teleop_onboard.sh` into the robot checkout and add the aliases to `~/.bashrc`:
 ```bash
-alias teleop='bash ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/scripts/teleop_onboard.sh'
-alias teleop-stop='bash ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/scripts/teleop_onboard.sh --stop'
+alias teleop='bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh'
+alias teleop-stop='bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh --stop'
 ```
 
 **Each session:**

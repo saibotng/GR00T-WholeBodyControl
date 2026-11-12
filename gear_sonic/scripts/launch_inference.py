@@ -30,7 +30,7 @@ Usage (from repo root — no venv activation needed):
     python gear_sonic/scripts/launch_inference.py                        # real robot
     python gear_sonic/scripts/launch_inference.py --sim                  # MuJoCo sim
     python gear_sonic/scripts/launch_inference.py --no-data-exporter     # no recording pane
-    python gear_sonic/scripts/launch_inference.py --deploy-host g1new  # C++ deploy ON THE ROBOT (gear_sonic_deploy/ONBOARD.md)
+    python gear_sonic/scripts/launch_inference.py --deploy-host g1new  # C++ deploy ON THE ROBOT (tng/ONBOARD.md)
     python gear_sonic/scripts/launch_inference.py --dry-run   # print pane commands, start nothing
 """
 
