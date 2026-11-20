@@ -539,10 +539,14 @@ def main(config: InferenceLaunchConfig):
             # state from the robot's deploy; its token PUB already binds *:5556
             inference_cmd += f" --zmq-host {robot_ip}"
     else:
+        # tmux panes do not inherit this process's environment: forward the start-pose
+        # token (gear_sonic/utils/inference/initial_poses.py) explicitly
+        initial_token = os.environ.get("SONIC_INITIAL_TOKEN", "")
         inference_cmd = (
             f"cd {repo_root} && "
             f"source .venv_inference/bin/activate && "
-            f"python gear_sonic/scripts/run_vla_inference.py "
+            + (f"SONIC_INITIAL_TOKEN='{initial_token}' " if initial_token else "")
+            + f"python gear_sonic/scripts/run_vla_inference.py "
             f"--host {config.policy_host} "
             f"--port {policy_port} "
             f"--embodiment-tag {config.embodiment_tag} "
