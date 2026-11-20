@@ -15,10 +15,13 @@ means editing the yaml and restarting the service, never the unit file.
 View names are free (lowercase, digits, '_'); each view is published under its name.
 ego_view is what the data exporter always records and VLA inference reads.
 
-Optional per view (realsense, usb):  hd: true
-    publish that view at 1280x720 instead of the default 424x240 (same view name).
-    The data exporter records whatever size is published, so this is also the
-    resolution of recorded datasets. A RealSense needs a USB3 link for 1280x720@30.
+Optional per view (realsense, usb, oak):  resolution: [width, height]
+    publish that view at this size instead of the driver default (424x240; OAK 640x480).
+    A RealSense only accepts its own color modes; a USB camera is captured at least as
+    large and center-cropped to the aspect ratio; an OAK scales on the device.
+    `hd: true` is short for [1280, 720]. The data exporter records whatever size is
+    published, so this is also the resolution of recorded datasets. A RealSense needs a
+    USB3 link for 1280x720@30.
 """
 
 from __future__ import annotations
@@ -34,7 +37,7 @@ from pathlib import Path
 FIXED_VIEWS = ("ego_view", "head", "left_wrist", "right_wrist")  # any other name works too
 VIEW_NAME_RE = re.compile(r"[a-z][a-z0-9_]*")
 DRIVERS = ("usb", "realsense", "oak", "oak_mono", "zed")
-SD_RESOLUTION = (424, 240)  # driver default
+DRIVER_RESOLUTIONS = {"realsense": (424, 240), "usb": (424, 240), "oak": (640, 480), "oak_mono": (640, 480)}
 HD_RESOLUTION = (1280, 720)  # per view with `hd: true`
 
 
@@ -55,6 +58,25 @@ def _load(path: Path) -> dict:
     if not isinstance(cfg, dict) or not isinstance(cfg.get("views"), dict) or not cfg["views"]:
         _fail(f"{path}: need a top-level 'views:' mapping with at least one view")
     return cfg
+
+
+def _resolution(view: str, driver: str, spec: dict) -> tuple[int, int] | None:
+    """The view's `resolution: [width, height]` (or `hd: true`), None for the driver default."""
+    if spec.get("hd") and "resolution" in spec:
+        _fail(f"{view}: set either 'resolution' or 'hd', not both")
+    if spec.get("hd"):
+        resolution = HD_RESOLUTION
+    elif "resolution" in spec:
+        try:
+            width, height = (int(v) for v in spec["resolution"])
+        except (TypeError, ValueError):
+            _fail(f"{view}: resolution must be [width, height], e.g. [1280, 720] (got {spec['resolution']!r})")
+        resolution = (width, height)
+    else:
+        return None
+    if driver not in DRIVER_RESOLUTIONS:
+        _fail(f"{view}: a resolution is supported for drivers {', '.join(DRIVER_RESOLUTIONS)} (got {driver})")
+    return resolution
 
 
 def _resolve_usb(device: str) -> str:
@@ -108,13 +130,11 @@ def main() -> None:
             extra_views[view] = {"camera": driver, "device_id": device}
         if spec.get("rotate180"):
             rotate.append(view)
-        hd = bool(spec.get("hd"))
-        if hd:
-            if driver not in ("realsense", "usb"):
-                _fail(f"{view}: 'hd: true' is only supported for drivers realsense and usb (got {driver})")
-            resolutions.append(f"{view}={HD_RESOLUTION[0]}x{HD_RESOLUTION[1]}")
-        w, h = HD_RESOLUTION if hd else SD_RESOLUTION
-        print(f"[camera-config] {view}: {driver} @ {device} {w}x{h}"
+        resolution = _resolution(view, driver, spec)
+        if resolution:
+            resolutions.append(f"{view}={resolution[0]}x{resolution[1]}")
+        size = "x".join(map(str, resolution or DRIVER_RESOLUTIONS.get(driver, ()))) or "default size"
+        print(f"[camera-config] {view}: {driver} @ {device} {size}"
               + (" (rotated 180°)" if spec.get("rotate180") else ""))
 
     if "ego_view" not in configured:

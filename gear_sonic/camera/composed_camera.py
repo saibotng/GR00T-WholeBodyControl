@@ -110,9 +110,9 @@ class ComposedCameraConfig:
     under <name>, like the fixed ego_view/head/left_wrist/right_wrist options above."""
 
     resolutions: str = ""
-    """Per-view published resolution, e.g. "ego_view=1280x720" (realsense and usb drivers;
-    run_from_config sets it for views with `hd: true`). Views not listed use the driver
-    default (424x240). A RealSense only accepts modes it supports."""
+    """Per-view published resolution, e.g. "ego_view=1280x720" (realsense, usb and oak drivers;
+    run_from_config sets it from each view's `resolution`). Views not listed use the driver
+    default (424x240, OAK 640x480). A RealSense only accepts modes it supports."""
 
     def resolution_for(self, mount_position: str) -> tuple[int, int] | None:
         """(width, height) configured for a view in `resolutions`, else None."""
@@ -399,6 +399,9 @@ class ComposedCameraSensor(Sensor, SensorServer):
             from gear_sonic.camera.drivers.oak import OAKConfig, OAKSensor
 
             oak_config = OAKConfig()
+            resolution = self.config.resolution_for(mount_position)
+            if resolution is not None:
+                oak_config.color_image_dim = resolution
             oak_config.use_mjpeg = self.config.use_mjpeg
             oak_config.mjpeg_quality = self.config.mjpeg_quality
             if camera_type == "oak_mono":
