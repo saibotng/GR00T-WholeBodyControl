@@ -4,8 +4,9 @@
 # commit. Needs uv, Internet and sudo (udev rules, systemd service).
 #   1. RealSense udev rules (camera access without root)
 #   2. .venv_camera: gear_sonic[camera] (depthai for OAK) plus pyrealsense2 and pyyaml, on
-#      Python 3.12 (pyrealsense2 has no aarch64 wheel for SONIC's own Python version); rebuilt
-#      when the checked-out commit changes
+#      Python 3.10 (pyrealsense2 has no aarch64 wheel for 3.11, and its 3.12 wheels need
+#      glibc 2.38, newer than the robot's Ubuntu 22.04); rebuilt when the checked-out commit
+#      changes
 #   3. the connected cameras, each with a config entry (tng/scripts/list_cameras.sh)
 #   4. systemd service composed_camera_server: gear_sonic.camera.run_from_config with
 #      gear_sonic/camera/camera_config.yaml; started once the config is complete
@@ -36,7 +37,7 @@ fi
 COMMIT="$(git rev-parse HEAD)"
 if [ ! -x "$PY" ] || [ "$(cat .venv_camera/commit 2>/dev/null)" != "$COMMIT" ]; then
     log "Camera environment .venv_camera"
-    uv venv --clear --python 3.12 --prompt gear_sonic_camera .venv_camera
+    uv venv --clear --python 3.10 --prompt gear_sonic_camera .venv_camera
     uv pip install --python "$PY" -e "$REPO/gear_sonic[camera]" pyrealsense2 pyyaml
     echo "$COMMIT" >.venv_camera/commit
 fi

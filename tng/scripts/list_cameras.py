@@ -192,7 +192,7 @@ def main() -> None:
         try:
             cameras += discover()
         except ImportError as error:
-            unchecked.append(f"{kind} not checked: {error.name} is missing in this environment")
+            unchecked.append(f"{kind} not checked: {error}")
     print(HEADER)
     for camera in cameras:
         print(config_entry(camera) + "\n")
