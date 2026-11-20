@@ -7,6 +7,10 @@
 # PyZMQ, msgpack, Pinocchio, and other inference dependencies.
 #
 # Usage:  bash install_scripts/install_inference.sh   (run from repo root)
+#
+# Isaac-GR00T comes from NVIDIA upstream (git). To run the client on the same GR00T
+# commit as the policy server, point ISAAC_GR00T_DIR at that server's checkout:
+#         ISAAC_GR00T_DIR=../Isaac-GR00T bash install_scripts/install_inference.sh
 
 set -euo pipefail
 
@@ -57,7 +61,18 @@ uv venv .venv_inference --python "$MANAGED_PY" --prompt gear_sonic_inference
 # shellcheck disable=SC1091
 source .venv_inference/bin/activate
 echo "[INFO] Installing gear_sonic[inference] (this may take a few minutes) …"
-uv pip install -e "gear_sonic[inference]"
+if [ -n "${ISAAC_GR00T_DIR:-}" ]; then
+    GR00T_DIR="$(cd "$ISAAC_GR00T_DIR" && pwd)"
+    echo "[INFO] Isaac-GR00T from the local checkout $GR00T_DIR"
+    OVERRIDES="$(mktemp)"
+    echo "gr00t @ file://$GR00T_DIR" > "$OVERRIDES"   # replaces the extra's git dependency
+    uv pip install --override "$OVERRIDES" -e "gear_sonic[inference]"
+    rm -f "$OVERRIDES"
+else
+    # Isaac-GR00T's [tool.uv.sources] points torchcodec at a wheel file inside its repo, which
+    # uv rejects in a git dependency: take torchcodec from PyPI instead.
+    uv pip install --no-sources-package torchcodec -e "gear_sonic[inference]"
+fi
 
 echo ""
 echo "══════════════════════════════════════════════════════════════"
