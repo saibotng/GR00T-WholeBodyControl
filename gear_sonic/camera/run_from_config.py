@@ -9,7 +9,7 @@ to something composed_camera accepts, prints the resolved plan, and execs
     python -m gear_sonic.camera.composed_camera --<view>-camera ... --<view>-device-id ...
 
 so ps/systemd see the real server process. The systemd unit installed by
-gear_sonic/scripts/install_camera_service.sh points here — swapping a camera
+tng/scripts/setup_camera_server.sh points here — swapping a camera
 means editing the yaml and restarting the service, never the unit file.
 
 View names are free (lowercase, digits, '_'); each view is published under its name.

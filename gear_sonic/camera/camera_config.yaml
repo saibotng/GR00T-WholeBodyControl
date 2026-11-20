@@ -1,41 +1,38 @@
-# Composed-camera-server configuration — THE single place to say which camera
-# is plugged in where. Consumed by gear_sonic.camera.run_from_config, which the
-# systemd unit (install: gear_sonic/scripts/install_camera_service.sh) execs.
-# Change a camera => edit this file, then: sudo systemctl restart composed_camera_server
+# Robot camera server configuration: one entry per published view. Read by
+# gear_sonic.camera.run_from_config, which the systemd service composed_camera_server on the
+# robot runs (installed by tng/scripts/setup_camera_server.sh).
+# After editing:  sudo systemctl restart composed_camera_server        (on the robot)
+# Check:          gear_sonic/scripts/run_camera_viewer.py: one tile per view, upright
 #
-# Views: ego_view, head, left_wrist, right_wrist. Omit or comment out unused views.
 # Per view:
-#   driver:  usb | realsense | oak | oak_mono | zed
-#   device:  how to find it —
-#            realsense/oak:  the serial / MxID, e.g. "317222070743"
-#            usb:            "/dev/v4l/by-path/..." (stable per PORT)
-#                            "/dev/v4l/by-id/..."   (stable per CAMERA; beware odd
-#                                                    characters — copy, never retype)
-#                            "match:<substring>"    (picks the by-id *-video-index0
-#                                                    entry containing it, e.g. "match:Spedal")
-#                            "/dev/video2" or a bare index
-#   rotate180: true          if the image is upside down (optional, default false)
-#
-# Current setup (2026-08-31 single-view): ONE Spedal 4K UVC cam as ego_view.
-# On the G1 it sat on USB port 2.1.3; on a PC use match:Spedal instead of a
-# by-path pin. History of previous layouts: the workspace docs/SITE.md.
+#   driver:     realsense | usb | oak | oak_mono | zed
+#   device:     realsense / oak: serial / MxID, quoted (keeps leading zeros);
+#               usb: "/dev/v4l/by-id/...", "/dev/v4l/by-path/...", "match:<substring>" or an
+#               index. tng/scripts/list_cameras.sh lists the connected cameras with ready entries.
+#   rotate180:  true if the camera is mounted upside down (optional)
+#   resolution: [width, height] the view is published and recorded at (realsense, usb, oak;
+#               optional, default 424x240, OAK 640x480). A RealSense accepts only its native
+#               modes, a USB camera is center-cropped to the aspect ratio and scaled, an OAK
+#               scales to any size; tng/scripts/list_cameras.sh lists each camera's native modes.
+#               (`hd: true` is short for [1280, 720].)
+# View names: ego_view, left_wrist, right_wrist. The data exporter records these and the policy
+# client sends them; other names are published, but need --extra-cameras to be recorded or used.
+# Keep this file unchanged once data is recorded: models only work with the camera setup they
+# were trained on.
 
 port: 5555
 fps: 30
 
 views:
-  ego_view:
-    driver: usb
-    device: "match:Spedal"
-    rotate180: false
-
-  # head:
-  #   driver: realsense
-  #   device: "317222070743"        # G1 head D435i
-  # left_wrist:
-  #   driver: realsense
-  #   device: "260522272405"        # D405
-  # right_wrist:
-  #   driver: usb
-  #   device: "/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1.2:1.0-video-index0"
-  #   rotate180: true
+  ego_view: # head camera
+    driver: realsense
+    device: ""
+    resolution: [424, 240]
+  left_wrist: # RealSense D405
+    driver: realsense
+    device: ""
+    resolution: [424, 240]
+  right_wrist: # RealSense D405
+    driver: realsense
+    device: ""
+    resolution: [424, 240]
