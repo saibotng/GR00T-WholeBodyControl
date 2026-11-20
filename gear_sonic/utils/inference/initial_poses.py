@@ -65,15 +65,28 @@ LATENT_INITIAL_MOTION_TOKEN_RELEASE = np.array(
 
 # The token actually used at deploy time. MUST match the SONIC checkpoint
 # passed to the controller (--cp / --deploy-checkpoint). Selected via the
-# SONIC_INITIAL_TOKEN env var ("low_latency" | "release"), default low_latency:
-#   SONIC_INITIAL_TOKEN=release python gear_sonic/scripts/launch_inference.py ...
+# SONIC_INITIAL_TOKEN env var, default low_latency:
+#   - a checkpoint name ("low_latency" | "release"):
+#       SONIC_INITIAL_TOKEN=release python gear_sonic/scripts/launch_inference.py ...
+#   - or the token itself, 64 comma-separated floats, e.g. the first
+#     action.motion_token of the training data (any checkpoint, incl. sonic_v1_1).
 _TOKENS_BY_CHECKPOINT = {
     "low_latency": LATENT_INITIAL_MOTION_TOKEN_LOW_LATENCY,
     "release": LATENT_INITIAL_MOTION_TOKEN_RELEASE,
 }
-_selected = os.environ.get("SONIC_INITIAL_TOKEN", "low_latency")
-if _selected not in _TOKENS_BY_CHECKPOINT:
+_selected = os.environ.get("SONIC_INITIAL_TOKEN", "low_latency").strip()
+if _selected in _TOKENS_BY_CHECKPOINT:
+    LATENT_INITIAL_MOTION_TOKEN = _TOKENS_BY_CHECKPOINT[_selected]
+elif "," in _selected:
+    LATENT_INITIAL_MOTION_TOKEN = np.array(
+        [float(v) for v in _selected.split(",")], dtype=np.float32
+    )
+    if LATENT_INITIAL_MOTION_TOKEN.shape != (64,):
+        raise ValueError(
+            f"SONIC_INITIAL_TOKEN must hold 64 values, got {LATENT_INITIAL_MOTION_TOKEN.shape[0]}"
+        )
+else:
     raise ValueError(
         f"SONIC_INITIAL_TOKEN={_selected!r} — must be one of {sorted(_TOKENS_BY_CHECKPOINT)}"
+        " or 64 comma-separated floats"
     )
-LATENT_INITIAL_MOTION_TOKEN = _TOKENS_BY_CHECKPOINT[_selected]
