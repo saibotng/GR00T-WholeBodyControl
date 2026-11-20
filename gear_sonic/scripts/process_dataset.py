@@ -120,6 +120,28 @@ def load_tasks_meta(dataset_path: Path) -> list[dict]:
     return tasks
 
 
+def remap_task_index(
+    episodes: list[dict],
+    tasks_meta: list[dict],
+    merged_tasks: list[dict],
+    merged_index: dict[str, int],
+):
+    """Map one dataset's task_index values onto the merged task list (one entry per text).
+
+    Every dataset numbers its own tasks from 0. Copying task_index unchanged would label the
+    episodes of a later dataset with an earlier dataset's task of the same index, and
+    training reads the prompt via task_index -> tasks.jsonl.
+    """
+    local_to_merged = {}
+    for task in tasks_meta:
+        if task["task"] not in merged_index:
+            merged_index[task["task"]] = len(merged_tasks)
+            merged_tasks.append({"task_index": merged_index[task["task"]], "task": task["task"]})
+        local_to_merged[task["task_index"]] = merged_index[task["task"]]
+    for ep in episodes:
+        ep["df"]["task_index"] = ep["df"]["task_index"].map(local_to_merged)
+
+
 def get_parquet_path(dataset_path: Path, info: dict, episode_index: int) -> Path:
     data_path_pattern = info.get("data_path", "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet")
     chunks_size = info.get("chunks_size", 1000)
@@ -513,15 +535,10 @@ def main(cfg: ProcessDatasetConfig):
         info = load_info(dataset_paths[0])
         script_config = info.get("script_config")
 
-    # Collect tasks from all datasets (deduplicated)
-    all_tasks_meta: list[dict] = []
-    seen_task_ids: set = set()
-    for ds in dataset_paths:
-        for task in load_tasks_meta(ds):
-            tid = task.get("task_index", id(task))
-            if tid not in seen_task_ids:
-                all_tasks_meta.append(task)
-                seen_task_ids.add(tid)
+    # Tasks: a single dataset keeps its own; merged datasets get one list, deduplicated by
+    # task text, and each dataset's task_index column is mapped onto it (remap_task_index).
+    all_tasks_meta: list[dict] = [] if merging else load_tasks_meta(dataset_paths[0])
+    merged_task_index: dict[str, int] = {}
 
     # Process each dataset
     all_episodes = []
@@ -549,6 +566,8 @@ def main(cfg: ProcessDatasetConfig):
         if reference_info is None:
             reference_info = info
 
+        if merging:
+            remap_task_index(episodes, load_tasks_meta(ds_path), all_tasks_meta, merged_task_index)
         all_episodes.extend(episodes)
         for key in total_stats:
             total_stats[key] += stats[key]
