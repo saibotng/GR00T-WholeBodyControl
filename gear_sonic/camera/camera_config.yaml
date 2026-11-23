@@ -25,14 +25,16 @@ fps: 30
 
 views:
   ego_view: # head camera
-    driver: realsense
-    device: ""
-    resolution: [424, 240]
+    driver: oak
+    device: "14442C1041B5B2CE00"
+    resolution: [640, 480]
   left_wrist: # RealSense D405
     driver: realsense
-    device: ""
-    resolution: [424, 240]
+    device: "260322270540"
+    resolution: [640, 480]
   right_wrist: # RealSense D405
     driver: realsense
-    device: ""
-    resolution: [424, 240]
+    device: "260622272778"
+    resolution: [640, 480]
+    rotate180:  true
+
