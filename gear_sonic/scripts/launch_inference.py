@@ -178,6 +178,13 @@ class InferenceLaunchConfig:
     action_horizon: int = 40
     """Action horizon of the VLA policy."""
 
+    inference_interval: float = 0.4
+    """Seconds the GR00T client waits after an action chunk arrives before it starts the next
+    inference (run_vla_inference.py --rate is the inverse). A chunk runs for the interval plus
+    the inference latency, executing (interval + latency) x action_publish_rate of its actions;
+    keep interval + 2 x latency below the chunk's duration (action_horizon / action_publish_rate),
+    or the client repeats the chunk's last action until the next one arrives."""
+
     # Camera
     camera_host: str = "localhost"
     """Camera server host."""
@@ -241,6 +248,8 @@ def _check_prerequisites(config: InferenceLaunchConfig):
             ".venv_sim not found. Set up the simulation venv first."
         )
 
+    if config.inference_interval <= 0:
+        errors.append(f"--inference-interval must be > 0 (got {config.inference_interval})")
     if config.policy_client not in ("gr00t", "psi0"):
         errors.append(
             f"--policy-client must be 'gr00t' or 'psi0' (got {config.policy_client!r})"
@@ -383,6 +392,7 @@ def main(config: InferenceLaunchConfig):
     print(f"  Prompt:          {config.prompt}")
     print(f"  Action rate:     {config.action_publish_rate} Hz")
     print(f"  Action horizon:  {config.action_horizon}")
+    print(f"  Inference pause: {config.inference_interval} s")
     print(f"  Camera:          {config.camera_host}:{config.camera_port}")
     if config.extra_cameras:
         print(f"    Extra views:   {config.extra_cameras}")
@@ -553,6 +563,7 @@ def main(config: InferenceLaunchConfig):
             f"--prompt '{config.prompt}' "
             f"--action-publish-rate {config.action_publish_rate} "
             f"--action-horizon {config.action_horizon} "
+            f"--rate {1 / config.inference_interval} "
             f"--camera-host {config.camera_host} "
             f"--camera-port {config.camera_port}"
         )
