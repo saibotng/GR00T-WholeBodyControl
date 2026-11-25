@@ -15,22 +15,25 @@ The launcher fills in the hosts. The deploy gets `--zmq-host <workstation IP tow
 and exporter/clients get `--state-zmq-host <robot IP>`. The GR00T client binds its token PUB on
 `*`. The robot must be able to reach the workstation on TCP 5556 (firewall).
 
-## One-time robot setup (on the robot; needs sudo and the robot's WiFi for internet)
+## One-time robot setup (on the robot)
 
-Upstream reference: `docs/source/getting_started/installation_deploy.md`, `docs/source/references/jetpack6.md`.
+In the robot's clone of this fork (`~/tng/GR00T-WholeBodyControl`, the camera server's clone, at
+the commit the project pins):
 
-1. JetPack 6 (both G1 units: L4T R36.4.3, already fine).
-2. `sudo nvpmodel -m 0 && sudo jetson_clocks` (MAXN).
-3. `sudo apt-get install -y nvidia-l4t-dla-compiler libcudla-dev-12-6`
-4. TensorRT **10.7** aarch64 TAR (JetPack 6) → `~/TensorRT`, and `export TensorRT_ROOT=$HOME/TensorRT`
-   in `~/.bashrc` (the deploy pane runs `bash -ic`, so `.bashrc` is sourced).
-5. Real LFS files in the robot checkout (`~/tng/GR00T-WholeBodyControl`, branch `tng`):
-   `git lfs pull --include="gear_sonic_deploy/**"`. Check that
-   `gear_sonic_deploy/thirdparty/unitree_sdk2/lib/aarch64/libunitree_sdk2.a` is ~28 MB, not
-   133 bytes; with placeholders the build fails at link time (`file format not recognized`).
-   Without internet on the robot, copy them from the workstation:
-   `docs/WIRELESS_TELEOP_SETUP.md` B3 in the workspace.
-6. In the robot checkout: `cd gear_sonic_deploy && bash scripts/install_deps.sh`.
+```bash
+tng/scripts/setup_onboard_deploy.sh
+```
+
+It sets MAXN, allows `jetson_clocks` without a password (`deploy.sh` calls `sudo jetson_clocks` on
+every start, which would otherwise wait in the controller pane), installs the DLA packages, fetches
+the controller's Git LFS files, runs `gear_sonic_deploy/scripts/install_deps.sh`, builds, and ends
+with `check_onboard.sh`. It needs sudo and internet (the robot's Wi-Fi). TensorRT **10.7** for
+JetPack 6 it only checks: the TAR needs an NVIDIA login, so download it, extract it to
+`~/TensorRT` and run the script again. Upstream reference:
+`docs/source/getting_started/installation_deploy.md`, `docs/source/references/jetpack6.md`.
+
+The workstation needs SSH to the robot without a password prompt (the launchers' preflight runs
+`ssh -o BatchMode=yes`): `ssh-copy-id unitree@<robot>` once.
 
 ## Before each session (workstation)
 
@@ -96,14 +99,6 @@ PICO service into the home directory. It runs headless, and no `dpkg -i` is need
 ```bash
 mkdir -p /tmp/rs && dpkg-deb -x ~/tng/GR00T-WholeBodyControl/gear_sonic_deploy/thirdparty/roboticsservice_1.0.0.0_arm64.deb /tmp/rs && mv /tmp/rs/opt/apps/roboticsservice ~/roboticsservice && rm -rf /tmp/rs
 ```
-The robot's checkout is on `tng`, which doesn't contain the script until this branch is merged.
-Copy it from the workstation, in two commands:
-```bash
-ssh g1new mkdir -p tng/GR00T-WholeBodyControl/tng/scripts
-```
-```bash
-scp /home/innovation-hacking/luebbet/g1_vla_workspace/external/wbc/tng/scripts/teleop_onboard.sh g1new:tng/GR00T-WholeBodyControl/tng/scripts/
-```
 Then add the aliases to the robot's `~/.bashrc`:
 ```bash
 alias teleop='bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.sh'
@@ -111,8 +106,7 @@ alias teleop-stop='bash ~/tng/GR00T-WholeBodyControl/tng/scripts/teleop_onboard.
 ```
 
 **Each session:**
-1. Robot and router on. The robot's Wi-Fi must be on the router's network (see
-   `docs/WIRELESS_TELEOP_SETUP.md` B9).
+1. Robot and router on. The robot's Wi-Fi must be on the router's network.
 2. Laptop: cable to the robot → `ssh g1new` → read the robot's Wi-Fi IP
    (`ip -4 -br addr | grep wl`). Switch the laptop to the same Wi-Fi and `ssh unitree@<that IP>`
    (or an alias), then unplug the cable.
